@@ -2281,7 +2281,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
           </button>
 
           {/* Center: context-sensitive */}
-          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",justifyContent:(tool==="draw"||tool==="erase")?"flex-start":"center",gap:6,overflowX:"auto",WebkitOverflowScrolling:"touch",scrollbarWidth:"none"}}>
             {(tool === "draw" || tool === "erase") ? (
               // ── Draw mode toolbar ──────────────────────────────────────────────
               <>
