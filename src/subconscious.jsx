@@ -154,17 +154,8 @@ async function syncWithServer() {
 }
 
 function setupOfflineSync() {
-  const handleOnline = () => syncWithServer();
-  window.addEventListener("online", handleOnline);
-
-  // Sync every 30 seconds when online
-  const interval = setInterval(() => {
-    if (navigator.onLine) syncWithServer();
-  }, 30000);
-
+  // Static hosting (GitHub Pages) — no server to sync with, skip interval
   return () => {
-    clearInterval(interval);
-    window.removeEventListener("online", handleOnline);
   };
 }
 
@@ -437,17 +428,18 @@ function buildFluidPath(values, width, height) {
 function useAudioPlayback(item, activeAudioId, setActiveAudioId) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [fluidSpectrum, setFluidSpectrum] = useState(Array.from({ length: 32 }, () => 0.12));
+  const [fluidSpectrum, setFluidSpectrum] = useState(Array.from({ length: 16 }, () => 0.12));
   const audioRef = useRef(null);
   const synthRef = useRef(null);
   const analyserRef = useRef(null);
   const sourceRef = useRef(null);
   const rafRef = useRef(null);
+  const rafFrameRef = useRef(0);
   const playable = isPlayableAudioUrl(item.url);
   const expanded = activeAudioId === item.id;
   const fluidPath = buildFluidPath(fluidSpectrum, 320, 56);
 
-  const resetFluid = () => setFluidSpectrum(Array.from({ length: 32 }, () => 0.12));
+  const resetFluid = () => setFluidSpectrum(Array.from({ length: 16 }, () => 0.12));
   const stopAnalysis = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
@@ -457,19 +449,23 @@ function useAudioPlayback(item, activeAudioId, setActiveAudioId) {
   const pumpSpectrum = () => {
     const analyser = analyserRef.current;
     if (!analyser) return;
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(data);
-    const bands = 32;
-    const usableBins = Math.floor(data.length * 0.75);
-    const groupSize = Math.max(1, Math.floor(usableBins / bands));
-    const next = Array.from({ length: bands }, (_, index) => {
-      const start = index * groupSize;
-      const end = Math.min(start + groupSize, usableBins);
-      let sum = 0;
-      for (let i = start; i < end; i += 1) sum += data[i];
-      return Math.min(1, Math.max(0.06, (sum / Math.max(1, end - start)) / 255));
-    });
-    setFluidSpectrum((prev) => next.map((v, i) => prev[i] * 0.72 + v * 0.28));
+    rafFrameRef.current = (rafFrameRef.current + 1) % 2;
+    if (rafFrameRef.current === 0) {
+      // Only update state every 2nd frame (~30fps) to reduce React re-renders
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(data);
+      const bands = 16;
+      const usableBins = Math.floor(data.length * 0.7);
+      const groupSize = Math.max(1, Math.floor(usableBins / bands));
+      const next = Array.from({ length: bands }, (_, index) => {
+        const start = index * groupSize;
+        const end = Math.min(start + groupSize, usableBins);
+        let sum = 0;
+        for (let i = start; i < end; i += 1) sum += data[i];
+        return Math.min(1, Math.max(0.06, (sum / Math.max(1, end - start)) / 255));
+      });
+      setFluidSpectrum((prev) => next.map((v, i) => prev[i] * 0.7 + v * 0.3));
+    }
     rafRef.current = requestAnimationFrame(pumpSpectrum);
   };
   const ensureAudioAnalyser = async () => {
@@ -1213,8 +1209,9 @@ function PostMenu({ item, folders, t, openMenuId, setOpenMenuId, patchItem, remo
           <button onClick={() => setFolderOpen((c) => !c)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold active:opacity-70" style={{ color: t.text }}><Folder className="h-4 w-4 shrink-0" />Move to folder</button>
           {folderOpen && (
             <div className="mb-1 ml-4 rounded-xl p-1" style={{ background: t.input }}>
+              <button onClick={() => assignFolder(null)} className="block w-full rounded-lg px-3 py-2.5 text-left text-xs font-semibold active:opacity-70" style={{ color: !item.folder ? t.accent : t.muted }}>— No folder</button>
               {folders.map((name) => (
-                <button key={name} onClick={() => assignFolder(name)} className="block w-full rounded-lg px-3 py-2.5 text-left text-xs font-semibold active:opacity-70" style={{ color: (item.folder || "Ideas") === name ? t.accent : t.muted }}>{name}</button>
+                <button key={name} onClick={() => assignFolder(name)} className="block w-full rounded-lg px-3 py-2.5 text-left text-xs font-semibold active:opacity-70" style={{ color: item.folder === name ? t.accent : t.muted }}>{name}</button>
               ))}
             </div>
           )}
@@ -1546,7 +1543,7 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
     const fmText = boardDark ? "#fff" : "#111";
     const fmMuted = boardDark ? "rgba(255,255,255,.38)" : "rgba(0,0,0,.35)";
     return (
-      <div style={{position:"absolute",left:node.x,top:node.y}} onClick={onClick}>
+      <div data-node-id={node.id} style={{position:"absolute",left:node.x,top:node.y}} onClick={onClick}>
         {delBtn}
         {dragHandle}
         {selected && (
@@ -1587,7 +1584,7 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
   }
 
   if (node.type === "note") return (
-    <div style={{...baseStyle, width:node.w||200, minHeight:130, background:node.color||"#FFF176", display:"flex", flexDirection:"column"}}
+    <div data-node-id={node.id} style={{...baseStyle, width:node.w||200, minHeight:130, background:node.color||"#FFF176", display:"flex", flexDirection:"column"}}
       onClick={onClick}>
       {delBtn}
       {dragHandle}
@@ -1603,7 +1600,7 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
   );
 
   if (node.type === "vault") { const {item} = node; return (
-    <div style={{...baseStyle, width:node.w||240, background:isDark?"#1a1d2e":"#fff", overflow:"hidden"}}
+    <div data-node-id={node.id} style={{...baseStyle, width:node.w||240, background:isDark?"#1a1d2e":"#fff", overflow:"hidden"}}
       onClick={onClick}>
       {delBtn}
       {dragHandle}
@@ -1699,6 +1696,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   // Mutable copies kept in sync so pointer handlers never read stale closure values
   const panningRef = useRef(null);
   const draggingRef = useRef(null);
+  const dragPositionRef = useRef(null); // live position during drag — avoids setNodes every frame
   const lineStartRef = useRef(null);
   const toolRef = useRef("select");
   const drawColorRef = useRef("#1768FF");
@@ -1825,7 +1823,14 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     const pan = panningRef.current;
     const drag = draggingRef.current;
     if (pan) setOffset({x:pan.ox+cx-pan.sx, y:pan.oy+cy-pan.sy});
-    if (drag) setNodes(n=>n.map(nd=>nd.id===drag.id?{...nd,x:drag.nx+(cx-drag.mx)/scale,y:drag.ny+(cy-drag.my)/scale}:nd));
+    if (drag) {
+      // Move node via direct DOM mutation — avoids React re-rendering all nodes every frame
+      const newX = drag.nx + (cx - drag.mx) / scale;
+      const newY = drag.ny + (cy - drag.my) / scale;
+      dragPositionRef.current = {id: drag.id, x: newX, y: newY};
+      const el = document.querySelector(`[data-node-id="${drag.id}"]`);
+      if (el) { el.style.left = newX + "px"; el.style.top = newY + "px"; }
+    }
     if (toolRef.current==="draw") setCurrentDraw(d=>d?{...d,points:[...d.points,{x,y}]}:d);
     if (toolRef.current==="erase"&&erasingRef.current) eraseAt(x,y);
     if (toolRef.current==="line"&&lineStartRef.current) setLinePreview({x,y});
@@ -1846,6 +1851,12 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     setLineStart(null); lineStartRef.current=null; setLinePreview(null);
     erasingRef.current=false;
     setPanning(null); panningRef.current=null;
+    // Commit drag position to state now that the drag is done
+    if (dragPositionRef.current) {
+      const {id, x, y} = dragPositionRef.current;
+      setNodes(n => n.map(nd => nd.id === id ? {...nd, x, y} : nd));
+      dragPositionRef.current = null;
+    }
     setDragging(null); draggingRef.current=null;
   };
 
@@ -2162,19 +2173,23 @@ function QuickMediaVault() {
     const analyser = playlistAnalyserRef.current;
     const data = new Uint8Array(analyser.frequencyBinCount);
     let lastSpectrum = Array(16).fill(0);
+    let frameCount = 0;
     const pumpSpectrum = () => {
-      analyser.getByteFrequencyData(data);
-      const spectrum = [];
-      for (let i = 0; i < 16; i++) {
-        const start = Math.floor((i / 16) * data.length);
-        const end = Math.floor(((i + 1) / 16) * data.length);
-        let sum = 0;
-        for (let j = start; j < end; j++) sum += data[j];
-        const v = (sum / (end - start)) / 255;
-        spectrum[i] = lastSpectrum[i] * 0.72 + v * 0.28;
+      frameCount = (frameCount + 1) % 2;
+      if (frameCount === 0) {
+        analyser.getByteFrequencyData(data);
+        const spectrum = [];
+        for (let i = 0; i < 16; i++) {
+          const start = Math.floor((i / 16) * data.length);
+          const end = Math.floor(((i + 1) / 16) * data.length);
+          let sum = 0;
+          for (let j = start; j < end; j++) sum += data[j];
+          const v = (sum / (end - start)) / 255;
+          spectrum[i] = lastSpectrum[i] * 0.7 + v * 0.3;
+        }
+        lastSpectrum = spectrum;
+        setPlaylistFluidSpectrum(spectrum);
       }
-      lastSpectrum = spectrum;
-      setPlaylistFluidSpectrum(spectrum);
       playlistRafRef.current = requestAnimationFrame(pumpSpectrum);
     };
     playlistRafRef.current = requestAnimationFrame(pumpSpectrum);
