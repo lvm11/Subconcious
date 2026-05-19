@@ -1672,8 +1672,8 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const [tool, setTool] = useState("select");
   const [drawColor, setDrawColor] = useState("#1768FF");
   const [drawWidth, setDrawWidth] = useState(3);
-  // Board is always dark regardless of app theme
-  const boardDark = true;
+  // Board is always white regardless of app theme
+  const boardDark = false;
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [currentDraw, setCurrentDraw] = useState(null);
   const [lineStart, setLineStart] = useState(null);
@@ -1853,7 +1853,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     return ()=>el.removeEventListener("wheel",fn);
   },[]);
 
-  const bg = "#0d0f1e"; // Always dark canvas
+  const bg = "#ffffff"; // Always white canvas
   const dot = boardDark?"rgba(255,255,255,.05)":"rgba(0,0,0,.07)";
   const sp = 24*scale;
   const tbBg = boardDark?"rgba(7,8,18,.96)":"rgba(248,248,246,.96)";
