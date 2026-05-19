@@ -1,5 +1,6 @@
-const { useEffect, useMemo, useRef, useState } = React;
-const createRoot = ReactDOM.createRoot;
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import './index.css';
 
 let dbInstance = null;
 
@@ -9,7 +10,7 @@ function openDB() {
       resolve(dbInstance);
       return;
     }
-    const request = indexedDB.open("SubconsciousDB", 1);
+    const request = indexedDB.open("SubconsciousDB", 2);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       dbInstance = request.result;
@@ -24,6 +25,10 @@ function openDB() {
       if (!db.objectStoreNames.contains("syncQueue")) {
         const sq = db.createObjectStore("syncQueue", { keyPath: "id", autoIncrement: true });
         sq.createIndex("status", "status", { unique: false });
+      }
+      // v2: dedicated store for audio binary data — keeps items store lean
+      if (!db.objectStoreNames.contains("audioBlobs")) {
+        db.createObjectStore("audioBlobs", { keyPath: "id" });
       }
     };
   });
@@ -68,6 +73,48 @@ async function dbClear(storeName) {
     const tx = db.transaction(storeName, "readwrite");
     const store = tx.objectStore(storeName);
     store.clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Batch-write all items in a single readwrite transaction (fast, no sequential awaits)
+async function dbPutAllItems(items) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("items", "readwrite");
+    const store = tx.objectStore("items");
+    store.clear();
+    items.forEach(item => store.put(item));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Audio binary store — ArrayBuffer in, ArrayBuffer out
+async function saveAudioBlob(id, buffer, mime) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("audioBlobs", "readwrite");
+    tx.objectStore("audioBlobs").put({ id, buffer, mime: mime || "audio/mpeg" });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function loadAudioBlob(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("audioBlobs", "readonly");
+    const req = tx.objectStore("audioBlobs").get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbDeleteAudioBlob(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("audioBlobs", "readwrite");
+    tx.objectStore("audioBlobs").delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -220,6 +267,28 @@ async function blobToDataUrl(blob) {
   });
 }
 
+// Compress an image File to a small square data URL for use as cover art
+async function compressCoverArt(file) {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    const src = URL.createObjectURL(file);
+    img.onload = () => {
+      const size = 240;
+      const canvas = document.createElement("canvas");
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      // Centre-crop to square
+      const s = Math.min(img.width, img.height);
+      const ox = (img.width - s) / 2, oy = (img.height - s) / 2;
+      ctx.drawImage(img, ox, oy, s, s, 0, 0, size, size);
+      URL.revokeObjectURL(src);
+      resolve(canvas.toDataURL("image/jpeg", 0.75));
+    };
+    img.onerror = () => { URL.revokeObjectURL(src); resolve(null); };
+    img.src = src;
+  });
+}
+
 function createIcon(paths) {
   return function Icon({ className = "", style, width, height }) {
     const sized = width || height || (style && (style.width || style.height));
@@ -262,6 +331,20 @@ const Mic = createIcon([{ d: "M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-
 const Music = createIcon([{ d: "M9 18V5l12-2v13" }, { type: "circle", cx: 6, cy: 18, r: 3 }, { type: "circle", cx: 18, cy: 16, r: 3 }]);
 const Vault = createIcon([{ type: "rect", x: 2, y: 3, width: 20, height: 18, rx: 2 }, { type: "circle", cx: 12, cy: 12, r: 4 }, { d: "M12 8v1.5M12 14.5V16M8 12h1.5M14.5 12H16" }, { d: "M18 3v18" }]);
 const Feed = createIcon([{ type: "rect", x: 3, y: 3, width: 18, height: 5, rx: 1 }, { type: "rect", x: 3, y: 11, width: 18, height: 5, rx: 1 }, { d: "M3 19h12" }]);
+const FilePdf = createIcon([{ d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" }, { d: "M14 2v6h6" }, { d: "M9 13h1.5M9 17h6M11.5 13c.83 0 1.5.67 1.5 1.5S12.33 16 11.5 16H9v-3h2.5z" }]);
+const Camera = createIcon([{ d: "M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" }, { type: "circle", cx: 12, cy: 13, r: 4 }]);
+const UserCircle = createIcon([{ type: "circle", cx: 12, cy: 12, r: 10 }, { type: "circle", cx: 12, cy: 10, r: 3 }, { d: "M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" }]);
+const LogOut = createIcon([{ d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" }, { d: "M16 17l5-5-5-5" }, { d: "M21 12H9" }]);
+const Lock = createIcon([{ type: "rect", x: 3, y: 11, width: 18, height: 11, rx: 2 }, { d: "M7 11V7a5 5 0 0 1 10 0v4" }]);
+const Mail = createIcon([{ type: "rect", x: 2, y: 4, width: 20, height: 16, rx: 2 }, { d: "m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" }]);
+const Eye = createIcon([{ d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }, { type: "circle", cx: 12, cy: 12, r: 3 }]);
+const EyeOff = createIcon([{ d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }, { d: "M1 1l22 22" }]);
+const SettingsIcon = createIcon([{ type: "circle", cx: 12, cy: 12, r: 3 }, { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" }]);
+const Bell = createIcon([{ d: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" }, { d: "M13.73 21a2 2 0 0 1-3.46 0" }]);
+const BellOff = createIcon([{ d: "M13.73 21a2 2 0 0 1-3.46 0" }, { d: "M18.63 13A17.89 17.89 0 0 1 18 8" }, { d: "M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" }, { d: "M18 8a6 6 0 0 0-9.33-5" }, { d: "M1 1l22 22" }]);
+const InfoIcon = createIcon([{ type: "circle", cx: 12, cy: 12, r: 10 }, { d: "M12 16v-4" }, { d: "M12 8h.01" }]);
+const MessageSquare = createIcon([{ d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]);
+const Star = createIcon([{ d: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" }]);
 
 function hexToRgb(hex) {
   const c = hex.replace("#","");
@@ -322,14 +405,15 @@ function normalizeUrl(value) {
 }
 function detectType(value) {
   const lower = String(value || "").toLowerCase();
-  // Only direct audio files get the player — streaming service links open in-app
   if (/\.(mp3|wav|m4a|aac|flac|ogg|opus|webm)(\?.*)?$/i.test(lower)) return "song";
   if (/\.(jpg|jpeg|png|gif|webp|avif)(\?.*)?$/i.test(lower) || lower.includes("unsplash") || lower.includes("image")) return "image";
+  if (/\.pdf(\?.*)?$/i.test(lower)) return "pdf";
   return "link";
 }
 function iconFor(type) {
   if (type === "image") return Image;
   if (type === "note") return FileText;
+  if (type === "pdf") return FilePdf;
   return Link2;
 }
 function titleFromUrl(value, type) {
@@ -342,7 +426,8 @@ function titleFromUrl(value, type) {
     return value || "Untitled";
   }
 }
-function isPlayableAudioUrl(value) {
+function isPlayableAudioUrl(value, hasAudio) {
+  if (hasAudio) return true; // stored locally in audioBlobs IDB
   const lower = String(value || "").toLowerCase();
   return /^blob:/i.test(lower) || /^data:audio\//i.test(lower) || /\.(mp3|wav|m4a|aac|flac|ogg)(\?.*)?$/i.test(lower);
 }
@@ -353,10 +438,42 @@ function newId() {
   return Date.now() + Math.floor(Math.random() * 10000);
 }
 
+// Session-only in-memory cache: itemId → blob URL (revoked on item delete)
+// Never stored to IDB — blob URLs are session-only by definition.
+const audioBlobUrlCache = new Map();
+
+// Migration promises: tracks background data: URL → audioBlobs migrations
+// so resolveAudioUrl() can await them if play is tapped during migration.
+const migrationPromises = new Map();
+
 async function loadItemsFromDB(fallback) {
   try {
     const items = await dbGetAll("items");
-    return items.length > 0 ? items : fallback;
+    if (!items.length) return fallback;
+    return items.map(item => {
+      if (item.url?.startsWith("data:audio")) {
+        // Old item has binary data embedded — migrate it to audioBlobs in the background.
+        // Use fetch(dataUrl) which is async and doesn't block the main thread.
+        const dataUrl = item.url;
+        const migratedItem = { ...item, url: null, hasAudio: true };
+        const p = fetch(dataUrl)
+          .then(r => r.arrayBuffer())
+          .then(async buf => {
+            const mime = dataUrl.split(";")[0].split(":")[1] || "audio/mpeg";
+            await saveAudioBlob(item.id, buf, mime);
+            await dbPut("items", { ...migratedItem });
+          })
+          .catch(e => console.warn("Audio migration failed for", item.id, e))
+          .finally(() => migrationPromises.delete(item.id));
+        migrationPromises.set(item.id, p);
+        return migratedItem;
+      }
+      // Strip any stray blob: URLs that can't survive reload
+      if (item.url?.startsWith("blob:")) {
+        return { ...item, url: null };
+      }
+      return item;
+    });
   } catch (e) {
     console.error("Failed to load items:", e);
     return fallback;
@@ -431,166 +548,241 @@ function buildFluidPath(values, width, height) {
 function useAudioPlayback(item, activeAudioId, setActiveAudioId) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [fluidSpectrum, setFluidSpectrum] = useState(Array.from({ length: 16 }, () => 0.12));
+  const [duration, setDuration] = useState(0);
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  // Imperative Audio — created only when first played, zero memory until then.
   const audioRef = useRef(null);
-  const synthRef = useRef(null);
-  const analyserRef = useRef(null);
-  const sourceRef = useRef(null);
-  const rafRef = useRef(null);
-  const rafFrameRef = useRef(0);
-  const playable = isPlayableAudioUrl(item.url);
+  const playable = isPlayableAudioUrl(item.url, item.hasAudio);
   const expanded = activeAudioId === item.id;
-  const fluidPath = buildFluidPath(fluidSpectrum, 320, 56);
 
-  const resetFluid = () => setFluidSpectrum(Array.from({ length: 16 }, () => 0.12));
-  const stopAnalysis = () => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-    analyserRef.current = null;
-    resetFluid();
-  };
-  const pumpSpectrum = () => {
-    const analyser = analyserRef.current;
-    if (!analyser) return;
-    rafFrameRef.current = (rafFrameRef.current + 1) % 2;
-    if (rafFrameRef.current === 0) {
-      // Only update state every 2nd frame (~30fps) to reduce React re-renders
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      analyser.getByteFrequencyData(data);
-      const bands = 16;
-      const usableBins = Math.floor(data.length * 0.7);
-      const groupSize = Math.max(1, Math.floor(usableBins / bands));
-      const next = Array.from({ length: bands }, (_, index) => {
-        const start = index * groupSize;
-        const end = Math.min(start + groupSize, usableBins);
-        let sum = 0;
-        for (let i = start; i < end; i += 1) sum += data[i];
-        return Math.min(1, Math.max(0.06, (sum / Math.max(1, end - start)) / 255));
-      });
-      setFluidSpectrum((prev) => next.map((v, i) => prev[i] * 0.7 + v * 0.3));
+  // Resolve the playable URL: direct URL → immediate; hasAudio → IDB lookup.
+  const resolveUrl = async () => {
+    if (item.url && !item.url.startsWith("blob:null")) return item.url;
+    if (!item.hasAudio) return null;
+    // Check session cache first (blob URL from this session)
+    if (audioBlobUrlCache.has(item.id)) return audioBlobUrlCache.get(item.id);
+    // If a background migration is in flight for this item, wait for it
+    if (migrationPromises.has(item.id)) {
+      await migrationPromises.get(item.id);
     }
-    rafRef.current = requestAnimationFrame(pumpSpectrum);
+    // Load binary from audioBlobs IDB → create an in-memory blob URL
+    const data = await loadAudioBlob(item.id);
+    if (!data) return null;
+    const blob = new Blob([data.buffer], { type: data.mime || "audio/mpeg" });
+    const url = URL.createObjectURL(blob);
+    audioBlobUrlCache.set(item.id, url);
+    return url;
   };
-  const ensureAudioAnalyser = async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (sourceRef.current) { analyserRef.current = sourceRef.current.analyser; return; }
-    const AudioCtor = window.AudioContext || window["webkitAudioContext"];
-    if (!AudioCtor) return;
-    const ctx = new AudioCtor();
-    if (ctx.state === "suspended" && ctx.resume) await ctx.resume();
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.8;
-    const source = ctx.createMediaElementSource(audio);
-    source.connect(analyser);
-    analyser.connect(ctx.destination);
-    sourceRef.current = { ctx, source, analyser };
-    analyserRef.current = analyser;
+
+  // Wire up a new Audio element to the given URL
+  const buildAudio = (url) => {
+    const a = new Audio();
+    a.preload = "none";
+    a.src = url;
+    a.addEventListener("timeupdate", () => {
+      if (a.duration) setProgress((a.currentTime / a.duration) * 100);
+    });
+    a.addEventListener("loadedmetadata", () => setDuration(a.duration));
+    a.addEventListener("ended", () => { setIsPlaying(false); setProgress(0); });
+    audioRef.current = a;
+    return a;
   };
-  const stopSynth = () => {
-    const synth = synthRef.current;
-    if (!synth) return;
-    try {
-      synth.gain.gain.exponentialRampToValueAtTime(0.0001, synth.ctx.currentTime + 0.08);
-      synth.osc.stop(synth.ctx.currentTime + 0.1);
-      synth.lfo.stop(synth.ctx.currentTime + 0.1);
-    } catch {}
-    synthRef.current = null;
-  };
-  const startSynthPreview = async () => {
-    const AudioCtor = window.AudioContext || window["webkitAudioContext"];
-    if (!AudioCtor) return;
-    stopSynth();
-    const ctx = new AudioCtor();
-    if (ctx.state === "suspended" && ctx.resume) await ctx.resume();
-    const osc = ctx.createOscillator();
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    const gain = ctx.createGain();
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.8;
-    osc.type = "sine";
-    osc.frequency.value = 82;
-    lfo.frequency.value = 0.22;
-    lfoGain.gain.value = 24;
-    gain.gain.value = 0.0001;
-    lfo.connect(lfoGain);
-    lfoGain.connect(osc.frequency);
-    osc.connect(analyser);
-    analyser.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    lfo.start();
-    gain.gain.exponentialRampToValueAtTime(0.045, ctx.currentTime + 0.16);
-    synthRef.current = { ctx, osc, lfo, gain };
-    analyserRef.current = analyser;
-  };
+
+  // Release memory when card unmounts
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
   const stopPlayback = () => {
-    if (audioRef.current) audioRef.current.pause();
-    stopSynth();
-    stopAnalysis();
+    audioRef.current?.pause();
     setIsPlaying(false);
   };
-  const toggle = async () => {
+
+  const toggle = () => {
     if (!expanded) setActiveAudioId(item.id);
     if (isPlaying) { stopPlayback(); setActiveAudioId(null); return; }
-    if (playable && audioRef.current) {
-      try {
-        await audioRef.current.play();
-        setIsPlaying(true);
-        // Analyser is optional — don't block playback if it fails
-        ensureAudioAnalyser().then(() => pumpSpectrum()).catch(() => {});
-      } catch {
-        // Audio play failed — nothing to fall back to
-        setIsPlaying(false);
-      }
+    if (!playable) { setActiveAudioId(item.id); return; }
+
+    // Fast path: URL already available in state (blob: from current session or https:)
+    if (item.url && !item.url.startsWith("blob:null")) {
+      if (!audioRef.current) buildAudio(item.url);
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
       return;
     }
-    // Non-playable item: synth preview
-    await startSynthPreview();
-    setIsPlaying(true);
-    pumpSpectrum();
+
+    // Check session cache synchronously before going async
+    if (audioBlobUrlCache.has(item.id)) {
+      const url = audioBlobUrlCache.get(item.id);
+      if (!audioRef.current) buildAudio(url);
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      return;
+    }
+
+    // Slow path: load from IDB. Show loading state then auto-play.
+    setLoadingAudio(true);
+    resolveUrl().then(url => {
+      setLoadingAudio(false);
+      if (!url) return;
+      if (!audioRef.current) buildAudio(url);
+      else if (!audioRef.current.src || audioRef.current.src === "about:blank") {
+        audioRef.current.src = url;
+      }
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    }).catch(() => setLoadingAudio(false));
   };
-  const onProgress = () => {
-    const audio = audioRef.current;
-    if (audio && audio.duration) setProgress((audio.currentTime / audio.duration) * 100);
+
+  const scrub = (pct) => {
+    setProgress(pct);
+    const a = audioRef.current;
+    if (a && a.duration) a.currentTime = (pct / 100) * a.duration;
   };
-  const scrub = (event) => {
-    const next = Number(event.target.value);
-    setProgress(next);
-    const audio = audioRef.current;
-    if (playable && audio && audio.duration) audio.currentTime = (next / 100) * audio.duration;
-  };
-  const endPlayback = () => { stopSynth(); stopAnalysis(); setIsPlaying(false); setProgress(0); };
+
   useEffect(() => {
     if (activeAudioId !== item.id && isPlaying) stopPlayback();
     if (activeAudioId !== item.id) setProgress(0);
   }, [activeAudioId]);
 
-  return { isPlaying, expanded, progress, fluidPath, fluidSpectrum, audioRef, playable, toggle, scrub, onProgress, endPlayback };
+  return { isPlaying, expanded, progress, duration, playable, loadingAudio, toggle, scrub };
 }
 
 function Styles() {
   return <style>{`
+    /* ── Reset + Base ── */
     *{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;box-sizing:border-box}
-    body{font-family:-apple-system,'SF Pro Display','SF Pro Text',BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;letter-spacing:-.01em}
+    body{
+      font-family:-apple-system,'SF Pro Display','SF Pro Text',BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+      -webkit-text-size-adjust:100%;
+    }
+
+    /* ── Spring physics variables ── */
+    :root{
+      --spring-snappy:cubic-bezier(0.34,1.56,0.64,1);
+      --spring-smooth:cubic-bezier(0.25,0.46,0.45,0.94);
+      --spring-slow:cubic-bezier(0.16,1,0.3,1);
+    }
+
+    /* ── Type scale — enforced globally ── */
+    .type-title{font-size:34px;font-weight:700;letter-spacing:-0.5px;line-height:1.05}
+    .type-title-sm{font-size:17px;font-weight:600;letter-spacing:-0.3px;line-height:1.2}
+    .type-section{font-size:20px;font-weight:600;letter-spacing:-0.3px;line-height:1.2}
+    .type-primary{font-size:15px;font-weight:590;letter-spacing:-0.1px;line-height:1.4}
+    .type-secondary{font-size:13px;font-weight:400;letter-spacing:0;line-height:1.4}
+    .type-label{font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase}
+
+    /* ── Keyframes ── */
     @keyframes spin{to{transform:rotate(360deg)}}
     @keyframes reveal{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
     @keyframes slideUp{from{opacity:0;transform:translateY(40px)}to{opacity:1;transform:translateY(0)}}
     @keyframes glowPulse{0%,100%{opacity:0}40%{opacity:1}}
     @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-    @keyframes pageFade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-    @keyframes playRing{0%,100%{box-shadow:0 0 0 0 var(--ring),0 0 12px var(--ring)}60%{box-shadow:0 0 0 5px transparent,0 0 22px var(--ring)}}
+    @keyframes pageFade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes playRing{0%,100%{box-shadow:0 0 0 0 var(--ring),0 0 12px var(--ring)}60%{box-shadow:0 0 0 6px transparent,0 0 28px var(--ring)}}
+    @keyframes waveBar{0%{transform:scaleY(0.12)}100%{transform:scaleY(1)}}
     @keyframes boatBob{0%,100%{transform:translateY(0) rotate(-2deg)}50%{transform:translateY(-2.5px) rotate(2deg)}}
     @keyframes borderSpin{to{--angle:360deg}}
-    .no-scrollbar{scrollbar-width:none}.no-scrollbar::-webkit-scrollbar{display:none}
+    /* Card stagger-in on scroll into view */
+    @keyframes cardIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    /* New item dropped in from above */
+    @keyframes newItemIn{from{opacity:0;transform:translateY(-24px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+    /* Play button tap pulse — fires once per tap */
+    @keyframes tapPulse{0%{box-shadow:0 0 0 0 var(--glow,rgba(100,200,255,.6)),0 0 8px var(--glow,rgba(100,200,255,.4))}55%{box-shadow:0 0 0 8px transparent,0 0 28px var(--glow,rgba(100,200,255,.5))}100%{box-shadow:0 0 0 0 transparent,0 0 8px var(--glow,rgba(100,200,255,.2))}}
+    /* FAB bounce on release */
+    @keyframes fabRelease{0%{transform:scale(0.93)}55%{transform:scale(1.05)}100%{transform:scale(1)}}
+    /* Vibe dot breathing */
+    @keyframes dotBreathe{0%,100%{opacity:.65;transform:scale(1)}50%{opacity:1;transform:scale(1.18)}}
+    /* Context/dropdown spring entry */
+    @keyframes contextIn{from{opacity:0;transform:scale(0.92) translateY(-4px)}to{opacity:1;transform:scale(1) translateY(0)}}
+    /* Item remove */
+    @keyframes itemOut{0%{opacity:1;transform:translateX(0);max-height:220px;margin-bottom:20px}100%{opacity:0;transform:translateX(-10px);max-height:0;margin-bottom:0;padding:0}}
+
+    /* ── Scrollbar ── */
+    .no-scrollbar{scrollbar-width:none;-webkit-overflow-scrolling:touch}
+    .no-scrollbar::-webkit-scrollbar{display:none}
+
+    /* ── Text clamp ── */
     .line-clamp-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-    .tray-input::placeholder{color:rgba(128,128,128,.6)}
+
+    /* ── Inputs ── */
+    .tray-input::placeholder{color:rgba(128,128,128,.55)}
+
+    /* ── Theme fade ── */
     .theme-bg{transition:background 500ms ease,color 300ms ease}
-    .card-press{transition:transform 160ms cubic-bezier(0.34,1.56,0.64,1),box-shadow 200ms ease}
-    .card-press:active{transform:scale(0.975)}
+
+    /* ── Cards — springy press, hover lift ── */
+    .card-press{
+      transition:
+        transform 220ms var(--spring-snappy),
+        box-shadow 200ms ease;
+      will-change:transform;
+    }
+    .card-press:active{transform:scale(0.974)!important}
+    @media(hover:hover){.card-press:hover{transform:translateY(-2px)}}
+
+    /* ── Scroll-reveal for feed items ── */
+    .card-reveal{opacity:0;transform:translateY(10px)}
+    .card-reveal.is-visible{
+      animation:cardIn 0.38s var(--spring-slow) both;
+    }
+    .card-reveal.is-new{
+      animation:newItemIn 0.3s var(--spring-smooth) both;
+    }
+
+    /* ── Nav button ── */
+    .nav-btn{
+      display:flex;align-items:center;justify-content:center;
+      border-radius:18px;padding:10px 8px;
+      border:none;background:transparent;cursor:pointer;
+      transition:background 180ms ease,color 180ms ease,transform 220ms var(--spring-snappy);
+      min-height:48px;min-width:48px;-webkit-tap-highlight-color:transparent;
+    }
+    .nav-btn:active{transform:scale(0.85)}
+    .nav-icon{transition:transform 240ms var(--spring-snappy)}
+    .nav-btn.is-active .nav-icon{transform:scale(1.22)}
+
+    /* ── FAB ── */
+    .fab{transition:transform 200ms var(--spring-snappy),box-shadow 200ms ease}
+    .fab:active{transform:scale(0.91)!important}
+    .fab.fab-open{animation:fabRelease 0.28s var(--spring-snappy) both}
+
+    /* ── Play button — tap pulse glow ── */
+    .play-btn{transition:transform 200ms var(--spring-snappy),box-shadow 200ms ease}
+    .play-btn:active{transform:scale(0.88)!important}
+    .play-btn.tapped{animation:tapPulse 0.5s ease forwards}
+
+    /* ── Scrubber thumb scale on grab ── */
+    .scrub-thumb{transition:transform 120ms var(--spring-snappy),left 80ms linear}
+    .scrub-thumb.dragging{transform:translate(-50%,-50%) scale(1.35)!important}
+
+    /* ── Vibe dot breathe ── */
+    .dot-breathe{animation:dotBreathe 2.5s ease-in-out infinite}
+
+    /* ── Flare title gradient shimmer ── */
+    @keyframes flareTitleGrad{
+      0%  { background-position: 0%   50% }
+      50% { background-position: 100% 50% }
+      100%{ background-position: 0%   50% }
+    }
+    /* Static props live in the class so React never touches background during animation.
+       Only --ft-grad (the CSS variable) is swapped on theme change — no clip glitch. */
+    .flare-title{
+      background: var(--ft-grad);
+      background-size: 300% 300%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: flareTitleGrad 5s ease-in-out infinite;
+    }
+
+    /* ── Dropdown / context spring ── */
+    .dropdown-spring{animation:contextIn 200ms var(--spring-snappy) both}
+
+    /* ── Note editor ── */
     .note-body{font-size:15px;line-height:1.8;outline:none}
     .note-body:empty::before{content:attr(data-placeholder);opacity:0.35;pointer-events:none}
     .note-body p{margin:0 0 .5em}
@@ -606,8 +798,13 @@ function Styles() {
     .note-body a{text-decoration:underline;color:inherit;opacity:.8}
     .note-body hr{border:none;border-top:1px solid rgba(128,128,128,.25);margin:1.2em 0}
     .note-body mark{border-radius:3px;padding:0 2px}
-    .note-toolbar-btn{display:flex;align-items:center;justify-content:center;border-radius:10px;height:38px;min-width:38px;padding:0 8px;font-size:14px;font-weight:700;cursor:pointer;border:none;transition:background 120ms,color 120ms,transform 80ms;background:transparent;flex-shrink:0}
-    .note-toolbar-btn:active{transform:scale(0.9)}
+    .note-toolbar-btn{
+      display:flex;align-items:center;justify-content:center;border-radius:10px;
+      height:38px;min-width:38px;padding:0 8px;font-size:14px;font-weight:700;
+      cursor:pointer;border:none;background:transparent;flex-shrink:0;
+      transition:background 120ms,color 120ms,transform 120ms var(--spring-snappy);
+    }
+    .note-toolbar-btn:active{transform:scale(0.84)}
     .safe-top{padding-top:env(safe-area-inset-top)}
     .safe-bottom{padding-bottom:env(safe-area-inset-bottom)}
     .note-body img{max-width:100%;border-radius:12px;margin:8px 0;display:block}
@@ -615,58 +812,435 @@ function Styles() {
   `}</style>;
 }
 
+function FlareTitle({ t }) {
+  return (
+    <span style={{
+      fontFamily: "'Nunito', -apple-system, system-ui, sans-serif",
+      fontSize: 42,
+      fontWeight: 900,
+      letterSpacing: -1.5,
+      lineHeight: 1,
+      color: t.text,
+      userSelect: "none",
+      display: "block",
+    }}>Flare</span>
+  );
+}
+
+// ── Local auth helpers ──────────────────────────────────────────────────────
+function localAuth_getUsers() {
+  try { return JSON.parse(localStorage.getItem("flare_users") || "[]"); } catch { return []; }
+}
+function localAuth_saveUsers(users) {
+  localStorage.setItem("flare_users", JSON.stringify(users));
+}
+function localAuth_getSession() {
+  try { return JSON.parse(localStorage.getItem("flare_session")); } catch { return null; }
+}
+function localAuth_saveSession(user) {
+  localStorage.setItem("flare_session", JSON.stringify(user));
+}
+function localAuth_clearSession() {
+  localStorage.removeItem("flare_session");
+}
+
+// ── ProfilePage ─────────────────────────────────────────────────────────────
+function ProfilePage({ t, currentUser, setCurrentUser }) {
+  const [view, setView] = useState(currentUser ? "profile" : "login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [error, setError] = useState("");
+  const [editName, setEditName] = useState(currentUser?.name || "");
+  const [editBio, setEditBio] = useState(currentUser?.bio || "");
+  const [editMode, setEditMode] = useState(false);
+  const avatarRef = useRef(null);
+
+  const primaryBg = `linear-gradient(135deg, ${t.glowA} 0%, ${t.glowB} 100%)`;
+
+  const field = (val, set, placeholder, type = "text", rightEl = null) => (
+    <div style={{ position: "relative" }}>
+      <input
+        value={val} onChange={e => set(e.target.value)}
+        placeholder={placeholder} type={showPw && type === "password" ? "text" : type}
+        style={{
+          width: "100%", boxSizing: "border-box",
+          background: t.input, color: t.text, border: `1px solid ${t.border}`,
+          borderRadius: 14, padding: "13px 16px", fontSize: 15, outline: "none",
+          paddingRight: rightEl ? 44 : 16,
+        }}
+      />
+      {rightEl && (
+        <button onClick={rightEl.action} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: t.muted, display: "flex" }}>
+          {rightEl.icon}
+        </button>
+      )}
+    </div>
+  );
+
+  const handleRegister = () => {
+    setError("");
+    if (!name.trim() || !email.trim() || !password.trim()) return setError("All fields required.");
+    const users = localAuth_getUsers();
+    if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) return setError("Email already registered.");
+    const user = { id: Date.now().toString(), name: name.trim(), email: email.trim(), password, bio: "", avatar: null, createdAt: Date.now() };
+    localAuth_saveUsers([...users, user]);
+    localAuth_saveSession(user);
+    setCurrentUser(user);
+    setEditName(user.name); setEditBio(user.bio);
+  };
+
+  const handleLogin = () => {
+    setError("");
+    if (!email.trim() || !password.trim()) return setError("Enter email and password.");
+    const users = localAuth_getUsers();
+    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === password);
+    if (!user) return setError("Incorrect email or password.");
+    localAuth_saveSession(user);
+    setCurrentUser(user);
+    setEditName(user.name); setEditBio(user.bio);
+  };
+
+  const handleLogout = () => {
+    localAuth_clearSession();
+    setCurrentUser(null);
+    setView("login");
+    setEmail(""); setPassword(""); setName(""); setError("");
+  };
+
+  const handleSaveProfile = () => {
+    const updated = { ...currentUser, name: editName.trim() || currentUser.name, bio: editBio };
+    const users = localAuth_getUsers().map(u => u.id === updated.id ? updated : u);
+    localAuth_saveUsers(users);
+    localAuth_saveSession(updated);
+    setCurrentUser(updated);
+    setEditMode(false);
+  };
+
+  const handleAvatar = async (file) => {
+    if (!file) return;
+    const compressed = await compressCoverArt(file);
+    if (!compressed) return;
+    const updated = { ...currentUser, avatar: compressed };
+    const users = localAuth_getUsers().map(u => u.id === updated.id ? updated : u);
+    localAuth_saveUsers(users);
+    localAuth_saveSession(updated);
+    setCurrentUser(updated);
+  };
+
+  // ── Auth screen ──
+  if (!currentUser) return (
+    <div style={{ padding: "8px 0 80px" }}>
+      <div style={{ background: t.panel, borderRadius: 24, padding: 24, border: `0.5px solid ${t.border}` }}>
+        {/* Toggle */}
+        <div style={{ display: "flex", background: t.input, borderRadius: 12, padding: 4, marginBottom: 24 }}>
+          {["login", "register"].map(v => (
+            <button key={v} onClick={() => { setView(v); setError(""); }}
+              style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700,
+                background: view === v ? t.panel : "transparent",
+                color: view === v ? t.text : t.muted,
+                boxShadow: view === v ? "0 1px 4px rgba(0,0,0,.12)" : "none",
+                transition: "all 180ms ease" }}>
+              {v === "login" ? "Sign In" : "Create Account"}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {view === "register" && field(name, setName, "Display name")}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.input, borderRadius: 14, padding: "13px 16px", border: `1px solid ${t.border}` }}>
+            <Mail style={{ width: 18, height: 18, color: t.muted, flexShrink: 0 }} />
+            <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" type="email"
+              style={{ flex: 1, background: "none", border: "none", outline: "none", color: t.text, fontSize: 15 }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.input, borderRadius: 14, padding: "13px 16px", border: `1px solid ${t.border}` }}>
+            <Lock style={{ width: 18, height: 18, color: t.muted, flexShrink: 0 }} />
+            <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type={showPw ? "text" : "password"}
+              style={{ flex: 1, background: "none", border: "none", outline: "none", color: t.text, fontSize: 15 }} />
+            <button onClick={() => setShowPw(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", color: t.muted, display: "flex" }}>
+              {showPw ? <EyeOff style={{ width: 17, height: 17 }} /> : <Eye style={{ width: 17, height: 17 }} />}
+            </button>
+          </div>
+
+          {error && <p style={{ color: "#FF6B6B", fontSize: 13, margin: 0 }}>{error}</p>}
+
+          <button onClick={view === "login" ? handleLogin : handleRegister}
+            style={{ marginTop: 4, padding: "14px 0", borderRadius: 14, border: "none", cursor: "pointer",
+              background: primaryBg, color: "#fff", fontWeight: 700, fontSize: 15 }}>
+            {view === "login" ? "Sign In" : "Create Account"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Profile screen ──
+  return (
+    <div style={{ padding: "8px 0 80px", display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Avatar + name */}
+      <div style={{ background: t.panel, borderRadius: 24, padding: 24, border: `0.5px solid ${t.border}`, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+        <button onClick={() => avatarRef.current?.click()} style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+          {currentUser.avatar
+            ? <img src={currentUser.avatar} style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", border: `2px solid ${t.border}` }} />
+            : <div style={{ width: 80, height: 80, borderRadius: "50%", background: primaryBg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <UserCircle style={{ width: 44, height: 44, color: "#fff" }} />
+              </div>
+          }
+          <div style={{ position: "absolute", bottom: 0, right: 0, width: 26, height: 26, borderRadius: "50%", background: t.panel, border: `1.5px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Camera style={{ width: 13, height: 13, color: t.muted }} />
+          </div>
+        </button>
+        <input ref={avatarRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { handleAvatar(e.target.files?.[0]); e.target.value = ""; }} />
+
+        {editMode ? (
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
+            <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="Display name"
+              style={{ background: t.input, color: t.text, border: `1px solid ${t.border}`, borderRadius: 12, padding: "10px 14px", fontSize: 15, outline: "none", textAlign: "center", fontWeight: 700, width: "100%", boxSizing: "border-box" }} />
+            <textarea value={editBio} onChange={e => setEditBio(e.target.value)} placeholder="Short bio…" rows={2}
+              style={{ background: t.input, color: t.text, border: `1px solid ${t.border}`, borderRadius: 12, padding: "10px 14px", fontSize: 14, outline: "none", resize: "none", width: "100%", boxSizing: "border-box" }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setEditMode(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 12, border: `1px solid ${t.border}`, background: "transparent", color: t.muted, fontWeight: 600, cursor: "pointer", fontSize: 14 }}>Cancel</button>
+              <button onClick={handleSaveProfile} style={{ flex: 1, padding: "10px 0", borderRadius: 12, border: "none", background: primaryBg, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>Save</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ textAlign: "center" }}>
+              <p style={{ margin: 0, fontWeight: 800, fontSize: 20, color: t.text }}>{currentUser.name}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 13, color: t.muted }}>{currentUser.email}</p>
+              {currentUser.bio && <p style={{ margin: "6px 0 0", fontSize: 14, color: t.soft, lineHeight: 1.4 }}>{currentUser.bio}</p>}
+            </div>
+            <button onClick={() => { setEditMode(true); setEditName(currentUser.name); setEditBio(currentUser.bio || ""); }}
+              style={{ padding: "8px 20px", borderRadius: 20, border: `1px solid ${t.border}`, background: t.active, color: t.text, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+              Edit Profile
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Account info */}
+      <div style={{ background: t.panel, borderRadius: 24, border: `0.5px solid ${t.border}`, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: `0.5px solid ${t.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+          <Mail style={{ width: 18, height: 18, color: t.muted, flexShrink: 0 }} />
+          <div>
+            <p style={{ margin: 0, fontSize: 12, color: t.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>Email</p>
+            <p style={{ margin: 0, fontSize: 15, color: t.text }}>{currentUser.email}</p>
+          </div>
+        </div>
+        <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+          <UserCircle style={{ width: 18, height: 18, color: t.muted, flexShrink: 0 }} />
+          <div>
+            <p style={{ margin: 0, fontSize: 12, color: t.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>Member since</p>
+            <p style={{ margin: 0, fontSize: 15, color: t.text }}>{new Date(currentUser.createdAt).toLocaleDateString("en-US", { month: "long", year: "numeric" })}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Sign out */}
+      <button onClick={handleLogout}
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", borderRadius: 20, border: `1px solid rgba(255,80,80,.3)`, background: "rgba(255,80,80,.08)", color: "#FF5050", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
+        <LogOut style={{ width: 18, height: 18 }} /> Sign Out
+      </button>
+    </div>
+  );
+}
+
 function NavButton({ active, icon: Icon, label, onClick, t }) {
   return (
-    <button onClick={onClick} aria-label={label} className="flex flex-col items-center justify-center gap-[3px] rounded-2xl py-2 transition active:scale-95" style={{ background: active ? t.active : "transparent", color: active ? t.text : t.muted, minHeight: 48 }}>
-      <Icon className="h-[1.15rem] w-[1.15rem]" />
-      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.04em", lineHeight: 1 }}>{label}</span>
+    <button
+      onClick={onClick}
+      aria-label={label}
+      className={`nav-btn${active ? " is-active" : ""}`}
+      style={{ color: active ? t.text : t.muted, background: active ? t.active : "transparent" }}
+    >
+      <span className="nav-icon" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon style={{ width: "1.45rem", height: "1.45rem" }} />
+      </span>
     </button>
   );
 }
 function MediaButton({ active, onClick, icon: Icon, label, t }) {
   return (
-    <button onClick={onClick} className="flex flex-col items-center gap-2 transition active:scale-95" style={{ color: active ? t.text : t.muted }}>
-      <span className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: active ? t.active : t.input, color: active ? t.text : t.muted, border: active ? `1.5px solid ${t.border}` : "1.5px solid transparent" }}>
-        <Icon className="h-5 w-5" />
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+        color: active ? t.text : t.muted, background: "none", border: "none",
+        cursor: "pointer", padding: 0,
+        transition: "transform 200ms var(--spring-snappy), color 180ms ease",
+      }}
+      onMouseDown={e => e.currentTarget.style.transform = "scale(0.91)"}
+      onMouseUp={e => e.currentTarget.style.transform = ""}
+      onMouseLeave={e => e.currentTarget.style.transform = ""}
+      onTouchStart={e => e.currentTarget.style.transform = "scale(0.91)"}
+      onTouchEnd={e => e.currentTarget.style.transform = ""}
+    >
+      <span style={{
+        display: "flex", width: 56, height: 56, alignItems: "center", justifyContent: "center",
+        borderRadius: 18, background: active ? t.active : t.input, color: active ? t.text : t.muted,
+        border: active ? `1.5px solid ${t.border}` : "1.5px solid transparent",
+        transition: "background 180ms ease, border-color 180ms ease",
+        boxShadow: active ? `0 4px 16px rgba(0,0,0,.12)` : "none",
+      }}>
+        <Icon style={{ width: 20, height: 20 }} />
       </span>
       {label && <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.02em" }}>{label}</span>}
     </button>
   );
 }
 
-function WaveformPlayer({ item, t, isPlaying, expanded, progress, fluidPath, fluidSpectrum, playable, scrub }) {
-  if (!expanded) return null;
-  const pct = playable ? progress : progress || (isPlaying ? 68 : 18);
-  const waveH = 56;
-  const svgW = 320;
-  const boatIdx = 9;
-  const boatX = boatIdx * (svgW / (fluidSpectrum.length - 1));
-  const rawBoatY = waveH - fluidSpectrum[boatIdx] * waveH;
-  const boatY = Math.min(rawBoatY, 43);
+// Scroll-reveal wrapper — fades + lifts card in when it enters the viewport
+function CardReveal({ children, isNew }) {
+  const ref = useRef(null);
+  const [vis, setVis] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (isNew) { setVis(true); return; }
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVis(true); obs.disconnect(); } },
+      { threshold: 0.04 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
   return (
-    <div className="mt-3 overflow-hidden rounded-2xl p-[1px]" style={{ background: `linear-gradient(135deg, ${t.glowA}, ${t.glowB}, ${t.glowC})`, boxShadow: isPlaying ? `0 0 18px ${t.glowA}66` : "none", animation: "reveal 250ms ease both" }}>
-      <div className="rounded-2xl p-3" style={{ background: t.panel2 }}>
-        <div className="overflow-hidden rounded-xl px-2 py-1" style={{ background: "rgba(255,255,255,.04)" }}>
-          <svg viewBox="0 0 320 48" className="h-10 w-full" preserveAspectRatio="none">
-            <defs>
-              <linearGradient id={`fluidFill-${item.id}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={t.glowA} stopOpacity="0.95" />
-                <stop offset="50%" stopColor={t.glowB} stopOpacity="0.5" />
-                <stop offset="100%" stopColor={t.glowC} stopOpacity="0.08" />
-              </linearGradient>
-            </defs>
-            <path d={fluidPath} fill={`url(#fluidFill-${item.id})`} style={{ opacity: isPlaying ? 1 : 0.45, transition: "opacity 120ms ease" }} />
-          </svg>
+    <div
+      ref={ref}
+      className={`card-reveal${vis ? (isNew ? " is-new" : " is-visible") : ""}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+// Consistent empty state — icon, label, optional CTA
+function EmptyState({ icon: Icon, label, cta, onCta, t }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "52px 24px 40px", gap: 14 }}>
+      {Icon && (
+        <div style={{ opacity: 0.18, transform: "scale(1.5)", marginBottom: 8 }}>
+          <Icon style={{ width: 52, height: 52, color: t.muted }} />
         </div>
-        <input
-          type="range" min="0" max="100" value={pct} onChange={scrub}
-          className="mt-2 block h-2.5 w-full cursor-pointer appearance-none rounded-full"
-          style={{ accentColor: t.glowA, background: `linear-gradient(90deg, ${t.glowA} 0%, ${t.glowB} ${pct}%, rgba(255,255,255,.1) ${pct}%)` }}
-          aria-label="Audio timeline"
+      )}
+      <p className="type-primary" style={{ color: t.muted, textAlign: "center", margin: 0 }}>{label}</p>
+      {cta && (
+        <button onClick={onCta} style={{
+          marginTop: 2, fontSize: 13, fontWeight: 600, color: t.glowA,
+          background: `${t.glowA}18`, border: "none", cursor: "pointer",
+          padding: "8px 18px", borderRadius: 12,
+          transition: "background 150ms ease, transform 150ms var(--spring-snappy)",
+        }}
+          onMouseDown={e => e.currentTarget.style.transform = "scale(0.95)"}
+          onMouseUp={e => e.currentTarget.style.transform = ""}
+        >
+          {cta}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// CSS-only animated bars — zero JS per frame, no AudioContext, no white noise
+const BAR_CONFIGS = [0.18,0.55,0.82,0.45,0.95,0.30,0.70,0.60,0.88,0.25,0.75,0.50,0.92,0.38,0.65,0.20,0.80,0.48,0.72,0.35];
+function AnimatedBars({ isPlaying, glowA, glowB }) {
+  return (
+    <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:32, padding:"0 2px" }}>
+      {BAR_CONFIGS.map((seed, i) => {
+        const dur = 0.55 + seed * 0.5;
+        const delay = (i * 41) % 380;
+        const minH = 4 + seed * 6;
+        return (
+          <div key={i} style={{
+            flex: 1,
+            minHeight: minH,
+            borderRadius: 3,
+            background: `linear-gradient(to top, ${glowA}, ${glowB})`,
+            transformOrigin: "bottom center",
+            animation: isPlaying ? `waveBar ${dur.toFixed(2)}s ease-in-out ${delay}ms infinite alternate` : "none",
+            transform: isPlaying ? undefined : `scaleY(${(minH / 32).toFixed(2)})`,
+            opacity: isPlaying ? 0.85 : 0.3,
+            transition: "opacity 200ms, transform 200ms",
+          }} />
+        );
+      })}
+    </div>
+  );
+}
+
+// Touch-friendly scrubber — pointer capture, thumb scales on grab
+function AudioScrubber({ progress, onScrub, glowA, glowB }) {
+  const trackRef = useRef(null);
+  const draggingRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
+  const getPct = (e) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width) return 0;
+    return Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+  };
+  return (
+    <div
+      ref={trackRef}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        draggingRef.current = true;
+        setDragging(true);
+        e.currentTarget.setPointerCapture(e.pointerId);
+        onScrub(getPct(e));
+      }}
+      onPointerMove={(e) => { if (draggingRef.current) onScrub(getPct(e)); }}
+      onPointerUp={(e) => { draggingRef.current = false; setDragging(false); onScrub(getPct(e)); }}
+      onPointerCancel={() => { draggingRef.current = false; setDragging(false); }}
+      style={{ padding: "12px 0", cursor: "pointer", touchAction: "none", userSelect: "none" }}
+    >
+      <div style={{ position: "relative", height: dragging ? 5 : 4, borderRadius: 3, background: "rgba(255,255,255,.12)", transition: "height 120ms var(--spring-snappy)" }}>
+        <div style={{
+          position: "absolute", inset: 0, right: `${100 - progress}%`, borderRadius: 3,
+          background: `linear-gradient(90deg,${glowA},${glowB})`,
+          transition: "right 80ms linear",
+        }} />
+        <div
+          className={`scrub-thumb${dragging ? " dragging" : ""}`}
+          style={{
+            position: "absolute", top: "50%", left: `${progress}%`,
+            transform: dragging ? "translate(-50%,-50%) scale(1.35)" : "translate(-50%,-50%) scale(1)",
+            width: 16, height: 16, borderRadius: "50%",
+            background: glowA, border: "2px solid rgba(255,255,255,.92)",
+            boxShadow: dragging ? `0 0 14px ${glowA}99, 0 2px 8px rgba(0,0,0,.3)` : `0 0 8px ${glowA}66`,
+            transition: "left 80ms linear, transform 130ms var(--spring-snappy), box-shadow 130ms ease",
+          }}
         />
+      </div>
+    </div>
+  );
+}
+
+function AudioPlayer({ item, t, isPlaying, expanded, progress, duration, playable, loadingAudio, scrub }) {
+  if (!expanded) return null;
+  const fmt = (s) => isFinite(s) && s > 0 ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}` : "0:00";
+  const currentSec = (progress / 100) * (duration || 0);
+  return (
+    <div style={{ marginTop:12, borderRadius:18, overflow:"hidden", padding:1, background:`linear-gradient(135deg,${t.glowA},${t.glowB},${t.glowC})`, boxShadow: isPlaying ? `0 0 20px ${t.glowA}44` : "none", animation:"reveal 250ms ease both" }}>
+      <div style={{ borderRadius:17, padding:"12px 14px 10px", background:t.panel2 }}>
+        {loadingAudio
+          ? <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:32, gap:8 }}>
+              <div style={{ width:16, height:16, borderRadius:"50%", border:`2px solid ${t.glowA}`, borderTopColor:"transparent", animation:"spin 600ms linear infinite" }} />
+              <span style={{ fontSize:11, color:t.muted }}>Loading…</span>
+            </div>
+          : <AnimatedBars isPlaying={isPlaying} glowA={t.glowA} glowB={t.glowB} />
+        }
+        {playable && (
+          <>
+            <AudioScrubber progress={progress} onScrub={scrub} glowA={t.glowA} glowB={t.glowB} />
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:t.muted, marginTop:2 }}>
+              <span>{fmt(currentSec)}</span><span>{fmt(duration)}</span>
+            </div>
+          </>
+        )}
         {!playable && item.url && (
-          <a href={normalizeUrl(item.url)} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-1.5 text-[10px] font-medium" style={{ color: t.muted }}>
-            <ExternalLink className="h-3 w-3 shrink-0" />Open in {item.url.includes("spotify") ? "Spotify" : "browser"}
+          <a href={normalizeUrl(item.url)} target="_blank" rel="noopener noreferrer" style={{ marginTop:8, display:"flex", alignItems:"center", gap:6, fontSize:11, color:t.muted, textDecoration:"none" }}>
+            <ExternalLink style={{ width:12, height:12, flexShrink:0 }} />Open in {item.url.includes("spotify") ? "Spotify" : "browser"}
           </a>
         )}
       </div>
@@ -675,25 +1249,42 @@ function WaveformPlayer({ item, t, isPlaying, expanded, progress, fluidPath, flu
 }
 
 function SongCard({ item, t, theme, activeAudioId, setActiveAudioId, editorProps, folders, openMenuId, setOpenMenuId, patchItem, removeItem, onOpen }) {
-  const { isPlaying, expanded, progress, fluidPath, fluidSpectrum, audioRef, playable, toggle, scrub, onProgress, endPlayback } = useAudioPlayback(item, activeAudioId, setActiveAudioId);
-  const isDark = theme === "dark";
+  const { isPlaying, expanded, progress, duration, playable, loadingAudio, toggle, scrub } = useAudioPlayback(item, activeAudioId, setActiveAudioId);
+  const [tapped, setTapped] = useState(false);
+  const onPlayTap = (e) => {
+    e.stopPropagation();
+    setTapped(true);
+    setTimeout(() => setTapped(false), 520);
+    toggle();
+  };
   return (
-    <article onClick={onOpen} className="card-press relative w-full min-w-0 cursor-pointer rounded-3xl backdrop-blur-xl" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
-      {playable && <audio ref={audioRef} crossOrigin={item.url?.startsWith("data:") || item.url?.startsWith("blob:") ? undefined : "anonymous"} src={item.url} onTimeUpdate={onProgress} onEnded={endPlayback} onError={() => {}} style={{ display: "none" }} />}
+    <article
+      onClick={onOpen}
+      className="card-press relative w-full min-w-0 cursor-pointer rounded-3xl"
+      style={{
+        background: t.panel,
+        boxShadow: "0 2px 16px rgba(0,0,0,.1), 0 1px 4px rgba(0,0,0,.06)",
+        border: `0.5px solid ${t.border}`,
+      }}
+    >
       <div className="p-5">
         <div className="flex items-center gap-3">
           <button
-            onClick={(e) => { e.stopPropagation(); toggle(); }}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition active:scale-95"
+            onClick={onPlayTap}
+            className={`play-btn flex h-11 w-11 shrink-0 items-center justify-center rounded-xl overflow-hidden${tapped ? " tapped" : ""}`}
             style={{
-              background: expanded ? `conic-gradient(from 120deg, ${t.glowA}, ${t.glowB}, ${t.glowC}, ${t.glowA})` : t.panel2,
+              background: item.cover
+                ? `url(${item.cover}) center/cover no-repeat`
+                : expanded ? `conic-gradient(from 120deg, ${t.glowA}, ${t.glowB}, ${t.glowC}, ${t.glowA})` : t.panel2,
               "--ring": `${t.glowA}99`,
-              animation: isPlaying ? "playRing 2s ease infinite" : "none",
-              boxShadow: isPlaying ? `0 0 16px ${t.glowA}66` : "none",
+              "--glow": `${t.glowA}88`,
+              animation: isPlaying && !tapped ? "playRing 2s ease infinite" : undefined,
+              boxShadow: isPlaying ? `0 0 20px ${t.glowA}66` : "none",
             }}
             aria-label={isPlaying ? "Pause" : "Play"}
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full" style={{ background: t.text, color: t.page }}>
+            <span className="flex h-7 w-7 items-center justify-center rounded-full"
+              style={{ background: item.cover ? "rgba(0,0,0,.45)" : t.text, color: item.cover ? "#fff" : t.page, backdropFilter: item.cover ? "blur(1px)" : "none" }}>
               {isPlaying ? <Pause className="h-3 w-3 fill-current" /> : <Play className="ml-0.5 h-3 w-3 fill-current" />}
             </span>
           </button>
@@ -706,19 +1297,55 @@ function SongCard({ item, t, theme, activeAudioId, setActiveAudioId, editorProps
           </div>
           <PostMenu item={item} folders={folders} t={t} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} patchItem={patchItem} removeItem={removeItem} />
         </div>
-        <WaveformPlayer item={item} t={t} isPlaying={isPlaying} expanded={expanded} progress={progress} fluidPath={fluidPath} fluidSpectrum={fluidSpectrum} playable={playable} toggle={toggle} scrub={scrub} />
+        <AudioPlayer item={item} t={t} isPlaying={isPlaying} expanded={expanded} progress={progress} duration={duration} playable={playable} loadingAudio={loadingAudio} scrub={scrub} />
       </div>
     </article>
   );
 }
 
 function AudioCard({ item, t, theme, activeAudioId, setActiveAudioId }) {
-  const { isPlaying, expanded, progress, fluidPath, fluidSpectrum, audioRef, playable, toggle, scrub, onProgress, endPlayback } = useAudioPlayback(item, activeAudioId, setActiveAudioId);
+  const { isPlaying, expanded, progress, duration, playable, loadingAudio, toggle, scrub } = useAudioPlayback(item, activeAudioId, setActiveAudioId);
   return (
     <>
-      {playable && <audio ref={audioRef} crossOrigin={item.url?.startsWith("data:") || item.url?.startsWith("blob:") ? undefined : "anonymous"} src={item.url} onTimeUpdate={onProgress} onEnded={endPlayback} onError={() => {}} style={{ display: "none" }} />}
-      <WaveformPlayer item={item} t={t} theme={theme} isPlaying={isPlaying} expanded={expanded} progress={progress} fluidPath={fluidPath} playable={playable} toggle={toggle} scrub={scrub} />
+      <button onClick={toggle} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", background:"none", border:"none", padding:"6px 0", cursor:"pointer", color:"inherit" }}>
+        <span style={{ width:36, height:36, borderRadius:"50%", background: isPlaying ? `linear-gradient(135deg,${t.glowA},${t.glowB})` : t.input, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, boxShadow: isPlaying ? `0 2px 12px ${t.glowA}55` : "none" }}>
+          {isPlaying ? <Pause className="h-3.5 w-3.5 fill-current" style={{color:"#fff"}} /> : <Play className="h-3.5 w-3.5 fill-current" style={{color:t.muted}} />}
+        </span>
+        <span style={{ fontSize:13, fontWeight:600, color:t.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1, textAlign:"left" }}>{item.title}</span>
+      </button>
+      <AudioPlayer item={item} t={t} isPlaying={isPlaying} expanded={expanded} progress={progress} duration={duration} playable={playable} loadingAudio={loadingAudio} scrub={scrub} />
     </>
+  );
+}
+
+function PdfCard({ item, t, editorProps, folders, openMenuId, setOpenMenuId, patchItem, removeItem, onOpen }) {
+  return (
+    <article
+      onClick={onOpen}
+      className="card-press relative w-full min-w-0 cursor-pointer rounded-3xl"
+      style={{ background: t.panel, boxShadow: "0 2px 16px rgba(0,0,0,.1), 0 1px 4px rgba(0,0,0,.06)", border: `0.5px solid ${t.border}` }}
+    >
+      <div className="p-5">
+        <div className="flex items-center gap-3">
+          {/* Thumbnail or default icon */}
+          {item.cover
+            ? <img src={item.cover} style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
+            : <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,#FF6B6B22,#FF8E5322)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: "0.5px solid #FF6B6B33" }}>
+                <FilePdf style={{ width: 22, height: 22, color: "#FF6B6B" }} />
+              </div>
+          }
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <TextEditor item={item} {...editorProps} />
+              <span className="shrink-0 text-[10px] font-medium tabular-nums" style={{ color: t.soft }}>{dateLabel(item.createdAt)}</span>
+            </div>
+            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "#FF6B6B", opacity: 0.8 }}>PDF</p>
+            {item.note && <p className="mt-1 line-clamp-2 text-xs leading-relaxed" style={{ color: t.muted }}>{item.note}</p>}
+          </div>
+          <PostMenu item={item} folders={folders} t={t} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} patchItem={patchItem} removeItem={removeItem} />
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -737,7 +1364,7 @@ function TextEditor({ item, t, inputStyle, editingTitleId, editingTitle, setEdit
         />
       ) : (
         <button onClick={(event) => startTitle(item, event)} className="block w-full text-left">
-          <p className="truncate text-sm font-semibold" style={{ color: t.text }}>{item.title}</p>
+          <p className="truncate type-primary" style={{ color: t.text }}>{item.title}</p>
         </button>
       )}
     </div>
@@ -821,13 +1448,14 @@ function VoiceRecorder({ open, t, onRecord, close }) {
     streamRef.current = null;
     setRecording(false);
 
-    // Save locally as data URL — no server needed
+    // Use blob URL in state (no base64 in heap); cache data URL async for IndexedDB
     try {
-      const url = await blobToDataUrl(blob);
+      const blobUrl = URL.createObjectURL(blob);
       onRecord({
         type: "song",
         title: `Voice Memo - ${new Date().toLocaleTimeString()}`,
-        url,
+        url: blobUrl,
+        blob,   // passed so caller can cache data URL for persistence
         note: "",
         duration
       });
@@ -904,7 +1532,7 @@ function VoiceRecorder({ open, t, onRecord, close }) {
   );
 }
 
-function AddTrayPanel({ open, t, theme, inputStyle, mediaMode, setMediaMode, url, note, folder, setUrl, setNote, setFolder, addItem, addImageFile, addAudioFile, onVoiceRecord, close }) {
+function AddTrayPanel({ open, t, theme, inputStyle, mediaMode, setMediaMode, url, note, folder, setUrl, setNote, setFolder, addItem, addImageFile, addAudioFile, addPdfFile, onVoiceRecord, close }) {
   if (!open) return null;
   const showTextFields = mediaMode === "link" || mediaMode === "note";
   const primaryBg = `linear-gradient(135deg, ${t.glowA} 0%, ${t.glowB} 100%)`;
@@ -927,7 +1555,7 @@ function AddTrayPanel({ open, t, theme, inputStyle, mediaMode, setMediaMode, url
           <label className="flex cursor-pointer flex-col items-center gap-2 transition active:scale-95" style={{ color: t.muted }}>
             <span className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: t.input, color: t.muted }}><Image className="h-5 w-5" /></span>
             <span style={{ fontSize: 10, fontWeight: 600 }}>Media</span>
-            <input type="file" accept="image/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.opus,.webm,.mp4" onChange={(event) => { const f = event.target.files?.[0]; if (f) { f.type.startsWith("image/") ? addImageFile(f) : addAudioFile(f); } event.target.value = ""; }} className="hidden" />
+            <input type="file" accept="image/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.opus,.webm,.mp4,.pdf" onChange={(event) => { const f = event.target.files?.[0]; if (f) { if (f.type.startsWith("image/")) addImageFile(f); else if (f.type === "application/pdf" || f.name.endsWith(".pdf")) addPdfFile(f); else addAudioFile(f); } event.target.value = ""; }} className="hidden" />
           </label>
         </div>
         {showTextFields && (
@@ -1108,7 +1736,30 @@ function RichNoteEditor({ value, onChange, t, onAttachImage, onAttachAudio }) {
 function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchItem, close }) {
   const imgInputRef = useRef(null);
   const audInputRef = useRef(null);
+  const coverInputRef = useRef(null);
+  const [pdfUrl, setPdfUrl] = React.useState(null);
+
+  // Resolve blob URL for PDF items
+  React.useEffect(() => {
+    if (item?.type !== "pdf") return;
+    if (item.url && !item.url.startsWith("blob:null")) { setPdfUrl(item.url); return; }
+    if (audioBlobUrlCache.has(item.id)) { setPdfUrl(audioBlobUrlCache.get(item.id)); return; }
+    loadAudioBlob(item.id).then(data => {
+      if (!data) return;
+      const blob = new Blob([data.buffer], { type: data.mime || "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      audioBlobUrlCache.set(item.id, url);
+      setPdfUrl(url);
+    });
+  }, [item?.id, item?.type]);
+
   if (!item) return null;
+
+  const changeCover = async (file) => {
+    if (!file) return;
+    const compressed = await compressCoverArt(file);
+    if (compressed) patchItem(item.id, { cover: compressed });
+  };
 
   const insertAttachment = (file, kind) => {
     if (!file) return;
@@ -1153,7 +1804,14 @@ function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchIt
 
       {/* Body — fills remaining space */}
       <div className="flex min-h-0 flex-1 flex-col px-5 overflow-hidden">
-        {item.type === "note" ? (
+        {item.type === "pdf" ? (
+          <div className="flex flex-1 flex-col overflow-hidden pt-4 pb-4 gap-3">
+            {pdfUrl
+              ? <iframe src={pdfUrl} style={{ flex: 1, border: "none", borderRadius: 14, background: "#fff", minHeight: 0 }} title={item.title} />
+              : <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: t.muted, fontSize: 14 }}>Loading PDF…</div>
+            }
+          </div>
+        ) : item.type === "note" ? (
           <RichNoteEditor
             value={item.note || ""}
             onChange={val => patchItem(item.id, { note: val })}
@@ -1163,6 +1821,18 @@ function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchIt
           />
         ) : (
           <div className="flex-1 overflow-y-auto pb-8 no-scrollbar pt-4">
+            {/* Cover art strip for songs */}
+            {item.type === "song" && (
+              <div className="mb-4 flex items-center gap-3">
+                <div style={{ position: "relative", width: 64, height: 64, borderRadius: 14, overflow: "hidden", flexShrink: 0, background: item.cover ? "transparent" : `linear-gradient(135deg,${t.glowA}22,${t.glowB}22)`, border: `0.5px solid ${t.border}` }}>
+                  {item.cover && <img src={item.cover} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+                  <button onClick={() => coverInputRef.current?.click()} style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: item.cover ? "rgba(0,0,0,.35)" : "transparent", border: "none", cursor: "pointer", color: item.cover ? "#fff" : t.muted }}>
+                    <Camera style={{ width: 20, height: 20 }} />
+                  </button>
+                </div>
+                <p className="text-xs" style={{ color: t.muted }}>Tap to {item.cover ? "change" : "add"} cover art</p>
+              </div>
+            )}
             <textarea
               value={item.note || ""}
               onChange={e => patchItem(item.id, { note: e.target.value })}
@@ -1187,11 +1857,13 @@ function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchIt
         )}
       </div>
 
-      {/* Hidden file inputs for note media attachment */}
+      {/* Hidden file inputs */}
       <input ref={imgInputRef} type="file" accept="image/*" style={{ display: "none" }}
         onChange={e => { insertAttachment(e.target.files?.[0], "image"); e.target.value = ""; }} />
       <input ref={audInputRef} type="file" accept="audio/*" style={{ display: "none" }}
         onChange={e => { insertAttachment(e.target.files?.[0], "audio"); e.target.value = ""; }} />
+      <input ref={coverInputRef} type="file" accept="image/*" style={{ display: "none" }}
+        onChange={e => { changeCover(e.target.files?.[0]); e.target.value = ""; }} />
 
       {/* Safe-area bottom spacer */}
       <div style={{ height: "env(safe-area-inset-bottom)", background: t.page, flexShrink: 0 }} />
@@ -1202,6 +1874,13 @@ function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchIt
 function PostMenu({ item, folders, t, openMenuId, setOpenMenuId, patchItem, removeItem }) {
   const open = openMenuId === item.id;
   const [folderOpen, setFolderOpen] = useState(false);
+  const coverInputRef = useRef(null);
+  const setCover = async (file) => {
+    if (!file) return;
+    const compressed = await compressCoverArt(file);
+    if (compressed) patchItem(item.id, { cover: compressed });
+    setOpenMenuId(null);
+  };
   const copyItem = () => { if (item.url) navigator.clipboard?.writeText(item.url); setOpenMenuId(null); };
   const shareItem = async () => {
     const shareUrl = item.url ? normalizeUrl(item.url) : "";
@@ -1216,7 +1895,7 @@ function PostMenu({ item, folders, t, openMenuId, setOpenMenuId, patchItem, remo
   return (
     <div className="relative shrink-0">
       {open && (
-        <div className="absolute bottom-12 right-0 z-20 w-52 rounded-2xl p-2 backdrop-blur-2xl" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
+        <div className="absolute bottom-12 right-0 z-20 w-52 rounded-2xl p-2 backdrop-blur-2xl dropdown-spring" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
           <button onClick={copyItem} disabled={!item.url} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold disabled:opacity-35 active:opacity-70" style={{ color: t.text }}><Copy className="h-4 w-4 shrink-0" />Copy link</button>
           <button onClick={shareItem} disabled={!item.url} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold disabled:opacity-35 active:opacity-70" style={{ color: t.text }}><ExternalLink className="h-4 w-4 shrink-0" />Share</button>
           <button onClick={() => setFolderOpen((c) => !c)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold active:opacity-70" style={{ color: t.text }}><Folder className="h-4 w-4 shrink-0" />Move to folder</button>
@@ -1228,12 +1907,16 @@ function PostMenu({ item, folders, t, openMenuId, setOpenMenuId, patchItem, remo
               ))}
             </div>
           )}
+          <button onClick={() => coverInputRef.current?.click()} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold active:opacity-70" style={{ color: t.text }}><Camera className="h-4 w-4 shrink-0" />Set Cover</button>
+          {item.cover && <button onClick={() => { patchItem(item.id, { cover: null }); setOpenMenuId(null); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold active:opacity-70" style={{ color: t.muted }}><X className="h-4 w-4 shrink-0" />Remove Cover</button>}
           <button onClick={() => removeItem(item.id)} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold active:opacity-70" style={{ color: "#ff6b6b" }}><Trash2 className="h-4 w-4 shrink-0" />Delete</button>
         </div>
       )}
       <button onClick={() => setOpenMenuId(open ? null : item.id)} className="flex h-10 w-10 items-center justify-center rounded-full transition active:scale-95" style={{ background: t.input, color: t.muted }} aria-label="Post actions">
         <MoreHorizontal className="h-4 w-4" />
       </button>
+      <input ref={coverInputRef} type="file" accept="image/*" style={{ display: "none" }}
+        onChange={e => { setCover(e.target.files?.[0]); e.target.value = ""; }} />
     </div>
   );
 }
@@ -1378,12 +2061,20 @@ function VibeDropdown({ theme, setTheme, t, customThemes, setCustomThemes }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 z-50 w-48 overflow-hidden rounded-2xl p-1" style={{ background: t.panel2, border: `1px solid ${t.border}`, boxShadow: t.shadow, animation: "reveal 180ms ease both" }}>
+        <div className="absolute right-0 top-full mt-2 z-50 w-48 overflow-hidden rounded-2xl p-1 dropdown-spring" style={{ background: t.panel2, border: `1px solid ${t.border}`, boxShadow: t.shadow }}>
           {VIBES.map(({ id, label, swatches }) => (
             <button key={id} onClick={() => { setTheme(id); setOpen(false); }}
-              className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[12px] font-semibold transition-colors"
-              style={{ background: theme === id ? t.active : "transparent", color: t.text }}>
-              <div className="flex gap-1">{swatches.map((c, i) => <div key={i} className="h-3.5 w-3.5 rounded-full" style={{ background: c, boxShadow: `0 0 0 1px rgba(255,255,255,.1)` }} />)}</div>
+              className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[12px] font-semibold"
+              style={{
+                background: theme === id ? t.active : "transparent", color: t.text,
+                transition: "background 150ms ease",
+              }}>
+              <div className="flex gap-1">
+                {swatches.map((c, i) => (
+                  <div key={i} className={`h-3.5 w-3.5 rounded-full${theme === id && i === 0 ? " dot-breathe" : ""}`}
+                    style={{ background: c, boxShadow: `0 0 0 1px rgba(255,255,255,.1)` }} />
+                ))}
+              </div>
               {label}
               {theme === id && <span className="ml-auto text-[10px]" style={{ color: t.accent }}>✓</span>}
             </button>
@@ -1433,6 +2124,198 @@ function VibeDropdown({ theme, setTheme, t, customThemes, setCustomThemes }) {
   );
 }
 
+// ── SettingsDrawer ───────────────────────────────────────────────────────────
+function SettingsDrawer({ open, onClose, t, theme, setTheme, currentUser, setCurrentUser, onGoProfile }) {
+  const [notifPermission, setNotifPermission] = useState(() => {
+    if (typeof Notification === "undefined") return "unsupported";
+    return Notification.permission;
+  });
+  const primaryBg = `linear-gradient(135deg, ${t.glowA} 0%, ${t.glowB} 100%)`;
+  const requestNotifications = async () => {
+    if (typeof Notification === "undefined") return;
+    if (notifPermission === "granted") {
+      // Can't revoke via JS — guide user to browser settings
+      setNotifPermission("prompt-revoke");
+      setTimeout(() => setNotifPermission("granted"), 3000);
+      return;
+    }
+    const result = await Notification.requestPermission();
+    setNotifPermission(result);
+    if (result === "granted") {
+      new Notification("Flare", { body: "Notifications are on 🔔", icon: "/favicon.ico" });
+    }
+  };
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0, zIndex: 40,
+          background: "rgba(0,0,0,.45)",
+          backdropFilter: "blur(4px)",
+          WebkitBackdropFilter: "blur(4px)",
+          opacity: open ? 1 : 0,
+          pointerEvents: open ? "auto" : "none",
+          transition: "opacity 280ms ease",
+        }}
+      />
+
+      {/* Drawer */}
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 50,
+        width: "min(85vw, 340px)",
+        background: t.panel2,
+        borderLeft: `0.5px solid ${t.border}`,
+        backdropFilter: "blur(32px) saturate(160%)",
+        WebkitBackdropFilter: "blur(32px) saturate(160%)",
+        boxShadow: "-8px 0 40px rgba(0,0,0,.35)",
+        transform: open ? "translateX(0)" : "translateX(100%)",
+        transition: "transform 300ms cubic-bezier(.32,.72,0,1)",
+        display: "flex", flexDirection: "column",
+        paddingTop: "max(24px, env(safe-area-inset-top))",
+        paddingBottom: "max(24px, env(safe-area-inset-bottom))",
+        overflowY: "auto",
+      }}>
+        {/* Header row */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px 20px" }}>
+          <p style={{ margin: 0, fontWeight: 800, fontSize: 18, color: t.text }}>Settings</p>
+          <button onClick={onClose} style={{ background: t.active, border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.muted }}>
+            <X style={{ width: 16, height: 16 }} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "0 14px" }}>
+          {/* ── Profile card ── */}
+          <div style={{ background: t.panel, borderRadius: 20, padding: 16, border: `0.5px solid ${t.border}` }}>
+            <p style={{ margin: "0 0 12px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: t.muted }}>Account</p>
+            {currentUser ? (
+              <button onClick={() => { onGoProfile(); onClose(); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left" }}>
+                {currentUser.avatar
+                  ? <img src={currentUser.avatar} style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                  : <div style={{ width: 44, height: 44, borderRadius: "50%", background: primaryBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <UserCircle style={{ width: 24, height: 24, color: "#fff" }} />
+                    </div>
+                }
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 15, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.name}</p>
+                  <p style={{ margin: 0, fontSize: 12, color: t.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.email}</p>
+                </div>
+                <ChevronLeft style={{ width: 16, height: 16, color: t.muted, transform: "rotate(180deg)", flexShrink: 0, marginLeft: "auto" }} />
+              </button>
+            ) : (
+              <button onClick={() => { onGoProfile(); onClose(); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: t.input, border: `1px solid ${t.border}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer" }}>
+                <UserCircle style={{ width: 22, height: 22, color: t.muted }} />
+                <div style={{ textAlign: "left" }}>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: t.text }}>Sign in</p>
+                  <p style={{ margin: 0, fontSize: 12, color: t.muted }}>Sync your vault across devices</p>
+                </div>
+                <ChevronLeft style={{ width: 16, height: 16, color: t.muted, transform: "rotate(180deg)", flexShrink: 0, marginLeft: "auto" }} />
+              </button>
+            )}
+          </div>
+
+          {/* ── Appearance / Vibe ── */}
+          <div style={{ background: t.panel, borderRadius: 20, padding: 16, border: `0.5px solid ${t.border}` }}>
+            <p style={{ margin: "0 0 12px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: t.muted }}>Appearance</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {VIBES.map(({ id, label, swatches }) => (
+                <button key={id} onClick={() => setTheme(id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, border: "none", cursor: "pointer",
+                    background: theme === id ? t.active : "transparent", color: t.text, textAlign: "left", transition: "background 150ms" }}>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {swatches.map((c, i) => <div key={i} style={{ width: 14, height: 14, borderRadius: "50%", background: c, boxShadow: "0 0 0 1px rgba(255,255,255,.1)" }} />)}
+                  </div>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{label}</span>
+                  {theme === id && <span style={{ marginLeft: "auto", fontSize: 12, color: t.accent }}>✓</span>}
+                </button>
+              ))}
+
+            </div>
+          </div>
+          {/* ── Notifications ── */}
+          <div style={{ background: t.panel, borderRadius: 20, padding: 16, border: `0.5px solid ${t.border}` }}>
+            <p style={{ margin: "0 0 12px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: t.muted }}>Notifications</p>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {notifPermission === "granted"
+                  ? <Bell style={{ width: 18, height: 18, color: t.glowA }} />
+                  : <BellOff style={{ width: 18, height: 18, color: t.muted }} />}
+                <div>
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: t.text }}>Push notifications</p>
+                  <p style={{ margin: 0, fontSize: 12, color: t.muted, marginTop: 1 }}>
+                    {notifPermission === "granted" ? "Enabled" :
+                     notifPermission === "denied" ? "Blocked in browser" :
+                     notifPermission === "unsupported" ? "Not supported" :
+                     notifPermission === "prompt-revoke" ? "Turn off in browser settings" :
+                     "Get reminders & updates"}
+                  </p>
+                </div>
+              </div>
+              {/* Toggle */}
+              {notifPermission !== "unsupported" && notifPermission !== "denied" && (
+                <button
+                  onClick={requestNotifications}
+                  style={{
+                    flexShrink: 0, width: 44, height: 26, borderRadius: 13, border: "none", cursor: "pointer",
+                    background: notifPermission === "granted" ? t.glowA : t.input,
+                    position: "relative", transition: "background 220ms ease",
+                  }}
+                >
+                  <div style={{
+                    position: "absolute", top: 3, left: notifPermission === "granted" ? 21 : 3,
+                    width: 20, height: 20, borderRadius: "50%", background: "#fff",
+                    boxShadow: "0 1px 4px rgba(0,0,0,.3)",
+                    transition: "left 220ms cubic-bezier(.32,.72,0,1)",
+                  }} />
+                </button>
+              )}
+              {notifPermission === "denied" && (
+                <span style={{ fontSize: 11, color: "#FF6B6B", fontWeight: 600 }}>Blocked</span>
+              )}
+            </div>
+          </div>
+
+          {/* ── About ── */}
+          <div style={{ background: t.panel, borderRadius: 20, overflow: "hidden", border: `0.5px solid ${t.border}` }}>
+            <p style={{ margin: 0, padding: "14px 16px 10px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: t.muted }}>About</p>
+
+            {[
+              { icon: <Star style={{ width: 17, height: 17 }} />, label: "Rate Flare", sub: "Enjoying the app? Leave a review", action: () => {} },
+              { icon: <MessageSquare style={{ width: 17, height: 17 }} />, label: "Send Feedback", sub: "Report a bug or share an idea", action: () => window.open("mailto:feedback@flare.app?subject=Flare Feedback") },
+              { icon: <InfoIcon style={{ width: 17, height: 17 }} />, label: "Privacy Policy", sub: null, action: () => {} },
+            ].map(({ icon, label, sub, action }, i, arr) => (
+              <button key={label} onClick={action}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12, width: "100%",
+                  padding: "12px 16px", border: "none", background: "transparent",
+                  borderBottom: i < arr.length - 1 ? `0.5px solid ${t.border}` : "none",
+                  cursor: "pointer", textAlign: "left",
+                }}>
+                <span style={{ color: t.muted, display: "flex", flexShrink: 0 }}>{icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: t.text }}>{label}</p>
+                  {sub && <p style={{ margin: 0, fontSize: 12, color: t.muted, marginTop: 1 }}>{sub}</p>}
+                </div>
+                <ChevronLeft style={{ width: 15, height: 15, color: t.muted, transform: "rotate(180deg)", flexShrink: 0 }} />
+              </button>
+            ))}
+
+            <div style={{ padding: "12px 16px", borderTop: `0.5px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <p style={{ margin: 0, fontSize: 12, color: t.muted }}>Flare by Loveem</p>
+              <span style={{ fontSize: 11, fontWeight: 700, color: t.muted, background: t.active, padding: "3px 8px", borderRadius: 6 }}>v1.0.0</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </>
+  );
+}
+
 function SlidingTabBar({ tabs, active, onChange, t, className = "", textSize = "text-[13px]", py = "py-2.5", px = "", equalWidth = true }) {
   const containerRef = React.useRef(null);
   const [pill, setPill] = React.useState({ left: 0, width: 0, ready: false });
@@ -1463,7 +2346,7 @@ function SlidingTabBar({ tabs, active, onChange, t, className = "", textSize = "
           width: pill.width,
           background: t.active,
           boxShadow: `0 0 14px ${t.glowA}28`,
-          transition: pill.ready ? "left 280ms cubic-bezier(0.4,0,0.2,1), width 280ms cubic-bezier(0.4,0,0.2,1)" : "none",
+          transition: pill.ready ? "left 300ms var(--spring-smooth), width 300ms var(--spring-smooth)" : "none",
         }}
       />
       {tabs.map(([id, label]) => (
@@ -2402,9 +3285,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
 
 function QuickMediaVault() {
   const [theme, setTheme] = useState(loadFromStorage("subconscious_theme", "dark"));
-  const [customThemes, setCustomThemes] = useState(loadFromStorage("subconscious_custom_themes", []));
-  const allThemes = { ...themes, ...Object.fromEntries(customThemes.map(ct => [ct.id, buildCustomTheme(ct.page, ct.accent, ct.text)])) };
-  const t = allThemes[theme] || themes.dark;
+  const t = themes[theme] || themes.dark;
   const [items, setItems] = useState(loadFromStorage("subconscious_items", starterItems));
   const [folderNames, setFolderNames] = useState(loadFromStorage("subconscious_folders", FOLDERS));
   const [url, setUrl] = useState("");
@@ -2417,6 +3298,8 @@ function QuickMediaVault() {
   const [editingTitleId, setEditingTitleId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [page, setPage] = useState("vault");
+  const [currentUser, setCurrentUser] = useState(() => localAuth_getSession());
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
   const [mediaMode, setMediaMode] = useState("link");
@@ -2429,10 +3312,10 @@ function QuickMediaVault() {
   const [openMenuId, setOpenMenuId] = useState(null);
   const [playlists, setPlaylists] = useState(loadFromStorage("subconscious_playlists", [{ id: 1, name: "Favorites", songIds: [] }, { id: 2, name: "Study", songIds: [] }]));
   const [newPlaylistName, setNewPlaylistName] = useState("");
+  const [newItemIds, setNewItemIds] = useState(new Set());
   const [playingPlaylistId, setPlayingPlaylistId] = useState(null);
   const [playlistQueueIndex, setPlaylistQueueIndex] = useState(0);
   const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
-  const [playlistFluidSpectrum, setPlaylistFluidSpectrum] = useState(Array(16).fill(0));
   const [playlistCurrentTime, setPlaylistCurrentTime] = useState(0);
   const [playlistDuration, setPlaylistDuration] = useState(0);
   const [syncStatus, setSyncStatus] = useState({ syncing: false, pending: 0 });
@@ -2441,10 +3324,22 @@ function QuickMediaVault() {
   const [renameFolderVal, setRenameFolderVal] = useState("");
   const [boardSession, setBoardSession] = useState(null);
   const playlistAudioRef = useRef(null);
-  const playlistAnalyserRef = useRef(null);
-  const playlistSourceRef = useRef(null);
-  const playlistRafRef = useRef(null);
-  const playlistAdvancedRef = useRef(false);
+  const playlistLoadingRef = useRef(false); // true while switching tracks — blocks onPause from clearing state
+  const saveTimerRef = useRef(null);         // debounce handle for items → IDB writes
+
+
+  // Orientation lock: portrait everywhere except inside a board
+  useEffect(() => {
+    const so = screen.orientation || screen.msOrientation || screen.mozOrientation;
+    if (!so || typeof so.lock !== "function") return;
+    if (boardSession) {
+      // Inside a board — unlock so the user can rotate freely
+      try { so.unlock(); } catch (_) {}
+    } else {
+      // Everywhere else — lock to portrait
+      so.lock("portrait").catch(() => {});
+    }
+  }, [boardSession]);
 
   // Load data from IndexedDB on mount
   useEffect(() => {
@@ -2476,68 +3371,27 @@ function QuickMediaVault() {
     };
   }, []);
 
-  // Playlist audio src is now set directly in playPlaylistSong() — no useEffect needed
+  // Visualizer is now CSS-only (AnimatedBars) — no RAF/AudioContext loop needed
 
-  // Track advancement is handled via onEnded prop on the <audio> element in playlistPage
-
+  // Debounced items save: 300ms after the last change, batch-write all items in a single
+  // IDB transaction. Audio items are saved with url:null (binary lives in audioBlobs store).
   useEffect(() => {
-    const audio = playlistAudioRef.current;
-    if (!audio || !playingPlaylistId) return;
-    try {
-      const AudioCtor = window.AudioContext || window["webkitAudioContext"];
-      const context = new AudioCtor();
-      if (!playlistSourceRef.current) playlistSourceRef.current = context.createMediaElementSource(audio);
-      if (!playlistAnalyserRef.current) {
-        playlistAnalyserRef.current = context.createAnalyser();
-        playlistAnalyserRef.current.smoothingTimeConstant = 0.8;
-        playlistSourceRef.current.connect(playlistAnalyserRef.current);
-        playlistAnalyserRef.current.connect(context.destination);
-      }
-    } catch {}
-  }, [playingPlaylistId]);
-
-  useEffect(() => {
-    if (!playingPlaylistId || !playlistAnalyserRef.current) return;
-    const analyser = playlistAnalyserRef.current;
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    let lastSpectrum = Array(16).fill(0);
-    let frameCount = 0;
-    const pumpSpectrum = () => {
-      frameCount = (frameCount + 1) % 2;
-      if (frameCount === 0) {
-        analyser.getByteFrequencyData(data);
-        const spectrum = [];
-        for (let i = 0; i < 16; i++) {
-          const start = Math.floor((i / 16) * data.length);
-          const end = Math.floor(((i + 1) / 16) * data.length);
-          let sum = 0;
-          for (let j = start; j < end; j++) sum += data[j];
-          const v = (sum / (end - start)) / 255;
-          spectrum[i] = lastSpectrum[i] * 0.7 + v * 0.3;
-        }
-        lastSpectrum = spectrum;
-        setPlaylistFluidSpectrum(spectrum);
-      }
-      playlistRafRef.current = requestAnimationFrame(pumpSpectrum);
-    };
-    playlistRafRef.current = requestAnimationFrame(pumpSpectrum);
-    return () => { if (playlistRafRef.current) cancelAnimationFrame(playlistRafRef.current); };
-  }, [playingPlaylistId]);
-
-  useEffect(() => {
-    (async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
       try {
-        await dbClear("items");
-        for (const item of items) {
-          await dbPut("items", item); // Save all items including data: URLs
-          if (!item.url?.startsWith("data:")) {
-            await queueOp("UPDATE", "item", item.id, item);
-          }
-        }
+        // Strip session blob URLs — they won't survive a reload anyway.
+        // hasAudio items have their binary in the audioBlobs store.
+        const itemsToSave = items.map(item =>
+          (item.hasAudio || item.hasPdf || item.url?.startsWith("blob:"))
+            ? { ...item, url: null }
+            : item
+        );
+        await dbPutAllItems(itemsToSave);
       } catch (e) {
         console.error("Failed to save items:", e);
       }
-    })();
+    }, 300);
+    return () => clearTimeout(saveTimerRef.current);
   }, [items]);
 
   useEffect(() => {
@@ -2577,11 +3431,11 @@ function QuickMediaVault() {
     })();
   }, [theme]);
 
-  // Auto-save to localStorage — strip very large data URLs to stay under quota
+  // Auto-save to localStorage — strip binary data so we stay under the ~5MB quota
   useEffect(() => {
     const compact = items.map(item =>
-      item.url?.startsWith("data:") && item.url.length > 150000
-        ? { ...item, url: "" }
+      (item.hasAudio || item.hasPdf || item.url?.startsWith("blob:") || (item.url?.startsWith("data:") && item.url.length > 150000))
+        ? { ...item, url: null }
         : item
     );
     saveToStorage("subconscious_items", compact);
@@ -2599,9 +3453,6 @@ function QuickMediaVault() {
     saveToStorage("subconscious_theme", theme);
   }, [theme]);
 
-  useEffect(() => {
-    saveToStorage("subconscious_custom_themes", customThemes);
-  }, [customThemes]);
 
   useEffect(() => {
     saveToStorage("subconscious_sessions", sessions);
@@ -2610,46 +3461,96 @@ function QuickMediaVault() {
   const inputStyle = { background: t.input, color: t.text };
   const primaryBg = `linear-gradient(135deg, ${t.glowA} 0%, ${t.glowB} 100%)`;
   const primaryText = "#fff";
-  const filtersList = [["all", "All"], ["images", "Images"], ["links", "Links"], ["notes", "Notes"], ["audio", "Audio"]];
+  const filtersList = [["all", "All"], ["images", "Images"], ["links", "Links"], ["notes", "Notes"], ["audio", "Audio"], ["pdfs", "PDFs"]];
   const folders = useMemo(() => [...new Set([...folderNames, ...items.map((item) => item.folder || "Ideas")])], [folderNames, items]);
   const ideaStackItems = items.filter((item) => ideaStackIds.includes(item.id));
   const filteredItems = useMemo(() => {
     const q = search.toLowerCase().trim();
     return items.filter((item) => {
-      const matches = activeFilter === "all" || (activeFilter === "images" && item.type === "image") || (activeFilter === "links" && item.type === "link") || (activeFilter === "audio" && item.type === "song") || (activeFilter === "notes" && item.type === "note");
+      const matches = activeFilter === "all" || (activeFilter === "images" && item.type === "image") || (activeFilter === "links" && item.type === "link") || (activeFilter === "audio" && item.type === "song") || (activeFilter === "notes" && item.type === "note") || (activeFilter === "pdfs" && item.type === "pdf");
       const haystack = [item.title, item.url, item.note, item.fileName, item.type].join(" ").toLowerCase();
       return matches && (!q || haystack.includes(q));
     }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }, [items, search, activeFilter]);
   const folderItems = useMemo(() => items.filter((item) => (item.folder || "Ideas") === selectedFolder).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [items, selectedFolder]);
   const patchItem = (id, patch) => setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
-  const removeItem = (id) => { setItems((current) => current.filter((item) => item.id !== id)); setIdeaStackIds((current) => current.filter((itemId) => itemId !== id)); };
+  const removeItem = (id) => {
+    // Clean up audio memory when deleting a locally-stored audio item
+    const target = items.find(i => i.id === id);
+    if (target?.hasAudio) {
+      const cached = audioBlobUrlCache.get(id);
+      if (cached) { URL.revokeObjectURL(cached); audioBlobUrlCache.delete(id); }
+      dbDeleteAudioBlob(id).catch(() => {});
+    }
+    setItems((current) => current.filter((item) => item.id !== id));
+    setIdeaStackIds((current) => current.filter((itemId) => itemId !== id));
+  };
   const saveTitle = (id) => { patchItem(id, { title: editingTitle.trim() || "Untitled" }); setEditingTitleId(null); setEditingTitle(""); };
   const startTitle = (item, event) => { event?.stopPropagation(); setEditingTitleId(item.id); setEditingTitle(item.title || "Untitled"); };
   const resetCapture = () => { setUrl(""); setNote(""); setFolder("Ideas"); setAddOpen(false); };
+  const markNew = (id) => {
+    setNewItemIds(prev => { const n = new Set(prev); n.add(id); return n; });
+    setTimeout(() => setNewItemIds(prev => { const n = new Set(prev); n.delete(id); return n; }), 1200);
+  };
   const addItem = () => {
     if (!url.trim() && !note.trim()) return;
-    if (!url.trim()) { setItems((current) => [{ id: newId(), type: "note", title: "Note", url: "", note: note.trim(), folder, createdAt: Date.now() }, ...current]); resetCapture(); return; }
+    const id = newId();
+    if (!url.trim()) {
+      setItems((current) => [{ id, type: "note", title: "Note", url: "", note: note.trim(), folder, createdAt: Date.now() }, ...current]);
+      markNew(id); resetCapture(); return;
+    }
     const safeUrl = normalizeUrl(url);
     const type = detectType(safeUrl);
-    setItems((current) => [{ id: newId(), type, title: titleFromUrl(safeUrl, type), url: safeUrl, note: note.trim(), folder, createdAt: Date.now() }, ...current]);
-    resetCapture();
+    setItems((current) => [{ id, type, title: titleFromUrl(safeUrl, type), url: safeUrl, note: note.trim(), folder, createdAt: Date.now() }, ...current]);
+    markNew(id); resetCapture();
   };
   const addImageFile = (file) => {
     if (!file) return;
+    const id = newId();
     const reader = new FileReader();
-    reader.onload = () => { setItems((current) => [{ id: newId(), type: "image", title: file.name.replace(/\.[^/.]+$/, ""), url: String(reader.result || ""), note: note.trim(), folder, createdAt: Date.now() }, ...current]); setActiveFilter("images"); resetCapture(); };
+    reader.onload = () => {
+      setItems((current) => [{ id, type: "image", title: file.name.replace(/\.[^/.]+$/, ""), url: String(reader.result || ""), note: note.trim(), folder, createdAt: Date.now() }, ...current]);
+      setActiveFilter("images"); markNew(id); resetCapture();
+    };
     reader.readAsDataURL(file);
   };
   const addAudioFile = (file) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setItems(current => [{ id: newId(), type: "song", title: file.name.replace(/\.[^/.]+$/, ""), url: String(reader.result || ""), fileName: file.name, note: note.trim(), folder, createdAt: Date.now() }, ...current]);
-      setActiveFilter("audio");
-      resetCapture();
-    };
-    reader.readAsDataURL(file);
+    const id = newId();
+    const blobUrl = URL.createObjectURL(file);
+    audioBlobUrlCache.set(id, blobUrl);
+    setItems(current => [{
+      id, type: "song",
+      title: file.name.replace(/\.[^/.]+$/, ""),
+      url: blobUrl,
+      hasAudio: true,
+      fileName: file.name,
+      note: note.trim(), folder, createdAt: Date.now()
+    }, ...current]);
+    setActiveFilter("audio"); markNew(id);
+    resetCapture();
+    file.arrayBuffer()
+      .then(buf => saveAudioBlob(id, buf, file.type || "audio/mpeg"))
+      .catch(e => console.error("Failed to save audio blob:", e));
+  };
+  const addPdfFile = (file) => {
+    if (!file) return;
+    const id = newId();
+    const blobUrl = URL.createObjectURL(file);
+    audioBlobUrlCache.set(id, blobUrl);
+    setItems(current => [{
+      id, type: "pdf",
+      title: file.name.replace(/\.[^/.]+$/, ""),
+      url: blobUrl,
+      hasPdf: true,
+      fileName: file.name,
+      note: note.trim(), folder, createdAt: Date.now()
+    }, ...current]);
+    setActiveFilter("pdfs"); markNew(id);
+    resetCapture();
+    file.arrayBuffer()
+      .then(buf => saveAudioBlob(id, buf, file.type || "application/pdf"))
+      .catch(e => console.error("Failed to save PDF blob:", e));
   };
   const createFolder = () => {
     const next = newFolderName.trim();
@@ -2707,36 +3608,71 @@ function QuickMediaVault() {
         />
       );
     }
+    if (item.type === "pdf") {
+      return (
+        <PdfCard
+          key={item.id}
+          item={item}
+          t={t}
+          editorProps={editorProps}
+          folders={folders}
+          openMenuId={openMenuId}
+          setOpenMenuId={setOpenMenuId}
+          patchItem={patchItem}
+          removeItem={removeItem}
+          onOpen={(event) => openPost(item, event)}
+        />
+      );
+    }
     const Icon = iconFor(item.type);
     return (
-      <article key={item.id} onClick={(event) => openPost(item, event)} className="card-press relative w-full min-w-0 cursor-pointer rounded-3xl backdrop-blur-xl" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
+      <article
+        key={item.id}
+        onClick={(event) => openPost(item, event)}
+        className="card-press relative w-full min-w-0 cursor-pointer rounded-3xl"
+        style={{
+          background: t.panel,
+          boxShadow: "0 2px 16px rgba(0,0,0,.1), 0 1px 4px rgba(0,0,0,.06)",
+          border: `0.5px solid ${t.border}`,
+        }}
+      >
         {item.type === "image" && item.url && (
-          <div className="p-[1.5px] rounded-t-3xl" style={{ background: `linear-gradient(160deg, ${t.glowA}60, ${t.glowB}30, transparent)` }}>
-            <div className="relative overflow-hidden rounded-t-[calc(1.5rem-1.5px)]">
-              <img src={item.url} alt={item.title} className="w-full h-auto" style={{ display: "block" }} />
-              <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 55%, rgba(0,0,0,.5))" }} />
+          <div style={{ padding: "1.5px", borderRadius: "1.5rem 1.5rem 0 0", background: `linear-gradient(160deg, ${t.glowA}60, ${t.glowB}30, transparent)` }}>
+            <div style={{ position: "relative", overflow: "hidden", borderRadius: "calc(1.5rem - 1.5px) calc(1.5rem - 1.5px) 0 0" }}>
+              <img src={item.url} alt={item.title} style={{ width: "100%", height: "auto", display: "block" }} />
+              <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, transparent 55%, rgba(0,0,0,.45))" }} />
             </div>
           </div>
         )}
         <div className="p-5">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={{ background: `linear-gradient(135deg, ${t.glowA}18, ${t.glowB}18)`, color: t.accent, border: `1px solid ${t.glowA}20` }}><Icon className="h-[1.05rem] w-[1.05rem]" /></div>
+            <div style={{
+              display: "flex", width: 40, height: 40, flexShrink: 0,
+              alignItems: "center", justifyContent: "center", borderRadius: 14,
+              background: `linear-gradient(135deg, ${t.glowA}20, ${t.glowB}20)`,
+              color: t.accent,
+              border: `0.5px solid ${t.glowA}22`,
+            }}>
+              <Icon style={{ width: "1.05rem", height: "1.05rem" }} />
+            </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
                 <TextEditor item={item} {...editorProps} />
-                <span className="shrink-0 text-[10px] font-medium tabular-nums" style={{ color: t.soft }}>{dateLabel(item.createdAt)}</span>
+                <span className="type-secondary shrink-0 tabular-nums" style={{ color: t.soft, fontSize: 10 }}>{dateLabel(item.createdAt)}</span>
               </div>
-              {item.note && <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed" style={{ color: t.muted }}>{stripHtml(item.note)}</p>}
+              {item.note && <p className="mt-1.5 line-clamp-2 type-secondary leading-relaxed" style={{ color: t.muted }}>{stripHtml(item.note)}</p>}
             </div>
             <PostMenu item={item} folders={folders} t={t} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} patchItem={patchItem} removeItem={removeItem} />
           </div>
           {item.type === "link" && item.url && (
             <LinkPreviewCard url={normalizeUrl(item.url)} t={t} className="mt-3" />
           )}
-          {item.type === "song" && item.url && !item.url.startsWith("data:") && (
-            <a href={normalizeUrl(item.url)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="mt-3 flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-[11px] font-medium" style={{ background: t.input, color: t.soft, border: `1px solid ${t.border}` }}>
-              <ExternalLink className="h-3 w-3 shrink-0" />
-              <span className="truncate">{item.url.replace(/^https?:\/\//, "")}</span>
+          {item.type === "song" && item.url && !item.url.startsWith("data:") && !item.url.startsWith("blob:") && !item.hasAudio && (
+            <a href={normalizeUrl(item.url)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+              className="mt-3 flex items-center gap-2 rounded-2xl px-3.5 py-2.5"
+              style={{ background: t.input, color: t.soft, border: `0.5px solid ${t.border}`, textDecoration: "none", fontSize: 11, fontWeight: 500 }}>
+              <ExternalLink style={{ width: 12, height: 12, flexShrink: 0 }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.url.replace(/^https?:\/\//, "")}</span>
             </a>
           )}
         </div>
@@ -2745,16 +3681,35 @@ function QuickMediaVault() {
   };
 
   const filters = (
-    <div className="rounded-[1.6rem] p-1.5 backdrop-blur-xl" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
-      <SlidingTabBar tabs={filtersList} active={activeFilter} onChange={setActiveFilter} t={t} textSize="text-xs" py="py-3" />
+    <div style={{
+      borderRadius: 22, padding: 6,
+      background: t.panel,
+      boxShadow: "0 2px 12px rgba(0,0,0,.1), 0 1px 4px rgba(0,0,0,.06)",
+      border: `0.5px solid ${t.border}`,
+    }}>
+      <SlidingTabBar tabs={filtersList} active={activeFilter} onChange={setActiveFilter} t={t} textSize="text-xs" py="py-2.5" />
     </div>
   );
 
   const vaultPage = (
     <>
       <div>{filters}</div>
-      <main className="grid min-w-0 gap-5 pt-4">{filteredItems.map((item) => renderCard(item))}</main>
-      {filteredItems.length === 0 && <div className="rounded-3xl py-10 text-center text-sm backdrop-blur-xl" style={{ background: t.panel, color: t.muted }}>Nothing saved here yet.</div>}
+      <main className="grid min-w-0 gap-4 pt-4">
+        {filteredItems.map((item) => (
+          <CardReveal key={item.id} isNew={newItemIds.has(item.id)}>
+            {renderCard(item)}
+          </CardReveal>
+        ))}
+      </main>
+      {filteredItems.length === 0 && (
+        <EmptyState
+          icon={activeFilter === "audio" ? Music : activeFilter === "images" ? Image : activeFilter === "notes" ? FileText : Vault}
+          label={search ? `No results for "${search}"` : "Nothing here yet"}
+          cta={search ? null : "Add something"}
+          onCta={() => setAddOpen(true)}
+          t={t}
+        />
+      )}
     </>
   );
 
@@ -2803,8 +3758,22 @@ function QuickMediaVault() {
           })}
         </div>
       </section>
-      <main className="grid min-w-0 gap-5">{folderItems.map((item) => renderCard(item))}</main>
-      {folderItems.length === 0 && <div className="rounded-3xl py-10 text-center text-sm backdrop-blur-xl" style={{ background: t.panel, color: t.muted }}>Nothing in {selectedFolder} yet.</div>}
+      <main className="grid min-w-0 gap-4">
+        {folderItems.map((item) => (
+          <CardReveal key={item.id} isNew={newItemIds.has(item.id)}>
+            {renderCard(item)}
+          </CardReveal>
+        ))}
+      </main>
+      {folderItems.length === 0 && (
+        <EmptyState
+          icon={Folder}
+          label={`Nothing in ${selectedFolder} yet`}
+          cta="Add something"
+          onCta={() => setAddOpen(true)}
+          t={t}
+        />
+      )}
     </div>
   );
 
@@ -2832,17 +3801,38 @@ function QuickMediaVault() {
   const deletePlaylist = (id) => setPlaylists(playlists.filter(p => p.id !== id));
   const addSongToPlaylist = (playlistId, songId) => setPlaylists(playlists.map(p => p.id === playlistId ? { ...p, songIds: p.songIds.includes(songId) ? p.songIds.filter(id => id !== songId) : [...p.songIds, songId] } : p));
 
-  // Playlist: play a song directly from a user gesture (avoids iOS autoplay block)
-  const playPlaylistSong = (pId, idx) => {
+  // Playlist: play a song — plain HTML5, no Web Audio, no glitches
+  const playPlaylistSong = async (pId, idx) => {
     const playlist = playlists.find(p => p.id === pId);
     if (!playlist) return;
     const pSongs = items.filter(s => playlist.songIds.includes(s.id));
     const song = pSongs[idx];
     if (!song || !playlistAudioRef.current) return;
+
+    // Resolve the URL: direct URL or lazy-load from audioBlobs IDB
+    let url = song.url;
+    if ((!url || url.startsWith("blob:null")) && song.hasAudio) {
+      if (audioBlobUrlCache.has(song.id)) {
+        url = audioBlobUrlCache.get(song.id);
+      } else {
+        if (migrationPromises.has(song.id)) await migrationPromises.get(song.id);
+        const data = await loadAudioBlob(song.id);
+        if (data) {
+          const blob = new Blob([data.buffer], { type: data.mime || "audio/mpeg" });
+          url = URL.createObjectURL(blob);
+          audioBlobUrlCache.set(song.id, url);
+        }
+      }
+    }
+    if (!url) return;
+
+    // Guard so onPause doesn't reset state while we're switching tracks
+    playlistLoadingRef.current = true;
     playlistAudioRef.current.pause();
-    playlistAudioRef.current.src = song.url;
+    playlistAudioRef.current.src = url;
     playlistAudioRef.current.load();
-    playlistAudioRef.current.play().catch(()=>{});
+    playlistAudioRef.current.play().catch(() => {});
+    playlistLoadingRef.current = false;
     setPlayingPlaylistId(pId);
     setPlaylistQueueIndex(idx);
     setExpandedPlaylistId(pId);
@@ -2854,7 +3844,7 @@ function QuickMediaVault() {
   const playlistPage = (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <audio ref={playlistAudioRef} style={{display:"none"}}
-        onPause={()=>{ if(playingPlaylistId) setPlayingPlaylistId(null); }}
+        onPause={()=>{ if(playingPlaylistId && !playlistLoadingRef.current) setPlayingPlaylistId(null); }}
         onTimeUpdate={()=>{ if(playlistAudioRef.current) setPlaylistCurrentTime(playlistAudioRef.current.currentTime); }}
         onLoadedMetadata={()=>{ if(playlistAudioRef.current) setPlaylistDuration(playlistAudioRef.current.duration); }}
         onEnded={()=>{
@@ -2871,66 +3861,46 @@ function QuickMediaVault() {
         const pSongs = pl ? items.filter(s=>pl.songIds.includes(s.id)) : [];
         const song = pSongs[playlistQueueIndex];
         if (!song) return null;
+        const isFirst = playlistQueueIndex === 0;
+        const isLast = playlistQueueIndex >= pSongs.length - 1;
+        const scrubPlaylist = (pct) => {
+          if (playlistAudioRef.current && playlistDuration) {
+            playlistAudioRef.current.currentTime = (pct / 100) * playlistDuration;
+            setPlaylistCurrentTime(playlistAudioRef.current.currentTime);
+          }
+        };
         return (
-          <div style={{borderRadius:24,overflow:"hidden",background:`linear-gradient(145deg,${t.glowA}22,${t.glowB}18,${t.panel})`,border:`1px solid ${t.border}`,boxShadow:t.shadow,padding:"20px 18px 16px"}}>
+          <div style={{borderRadius:24,overflow:"hidden",background:`linear-gradient(145deg,${t.glowA}18,${t.glowB}12,${t.panel})`,border:`1px solid ${t.glowA}44`,boxShadow:t.shadow,padding:"18px 16px 16px"}}>
             {/* Song info */}
-            <div style={{marginBottom:14}}>
-              <p style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,margin:"0 0 4px"}}>{pl.name}</p>
-              <p style={{fontSize:18,fontWeight:800,color:t.text,margin:"0 0 2px",lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</p>
+            <div style={{marginBottom:12}}>
+              <p style={{fontSize:10,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:t.muted,margin:"0 0 4px"}}>{pl.name}</p>
+              <p style={{fontSize:17,fontWeight:800,color:t.text,margin:"0 0 2px",lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</p>
               {song.note && <p style={{fontSize:12,color:t.muted,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.note}</p>}
             </div>
 
-            {/* Waveform */}
-            <svg viewBox="0 0 300 40" style={{width:"100%",height:40,display:"block",marginBottom:10}}>
-              <defs>
-                <linearGradient id="plGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={t.glowA} stopOpacity="1"/>
-                  <stop offset="100%" stopColor={t.glowB} stopOpacity="0.3"/>
-                </linearGradient>
-              </defs>
-              <path d={buildFluidPath(playlistFluidSpectrum.map(v=>Math.max(0.08,v)),300,40)} fill="url(#plGrad)" opacity="0.9"/>
-            </svg>
+            {/* Animated bars */}
+            <AnimatedBars isPlaying={!!playingPlaylistId} glowA={t.glowA} glowB={t.glowB} />
 
             {/* Scrubber */}
-            <div style={{marginBottom:10}}>
-              <div style={{position:"relative",height:4,borderRadius:2,background:t.input,marginBottom:4,cursor:"pointer"}}
-                onClick={e=>{
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const ratio = (e.clientX-rect.left)/rect.width;
-                  if(playlistAudioRef.current&&playlistDuration) playlistAudioRef.current.currentTime=ratio*playlistDuration;
-                }}>
-                <div style={{position:"absolute",left:0,top:0,height:"100%",borderRadius:2,background:`linear-gradient(90deg,${t.glowA},${t.glowB})`,width:`${pct}%`,transition:"width 0.5s linear"}}/>
-                <div style={{position:"absolute",top:"50%",transform:"translate(-50%,-50%)",width:12,height:12,borderRadius:"50%",background:t.glowA,boxShadow:`0 0 6px ${t.glowA}`,left:`${pct}%`,transition:"left 0.5s linear"}}/>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:t.muted}}>
-                <span>{fmt(playlistCurrentTime)}</span><span>{fmt(playlistDuration||0)}</span>
-              </div>
+            <AudioScrubber progress={pct} onScrub={scrubPlaylist} glowA={t.glowA} glowB={t.glowB} />
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:t.muted,marginTop:2,marginBottom:14}}>
+              <span>{fmt(playlistCurrentTime)}</span><span>{fmt(playlistDuration||0)}</span>
             </div>
 
             {/* Controls */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16}}>
-              <button onClick={()=>{ if(playlistQueueIndex>0) playPlaylistSong(playingPlaylistId,playlistQueueIndex-1); }}
-                disabled={playlistQueueIndex===0}
-                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",opacity:playlistQueueIndex===0?0.3:1}}>
-                ⏮
-              </button>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>
+              <button onClick={()=>{ if(!isFirst) playPlaylistSong(playingPlaylistId,playlistQueueIndex-1); }}
+                style={{width:40,height:40,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",opacity:isFirst?0.25:1}}>⏮</button>
               <button onClick={()=>{ if(playlistAudioRef.current) playlistAudioRef.current.currentTime=Math.max(0,playlistCurrentTime-10); }}
-                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                −10
-              </button>
+                style={{width:38,height:38,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−10</button>
               <button onClick={stopPlaylist}
-                style={{width:52,height:52,borderRadius:"50%",border:"none",cursor:"pointer",background:`linear-gradient(135deg,${t.glowA},${t.glowB})`,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 20px ${t.glowA}55`,flexShrink:0}}>
+                style={{width:56,height:56,borderRadius:"50%",border:"none",cursor:"pointer",background:`linear-gradient(135deg,${t.glowA},${t.glowB})`,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 22px ${t.glowA}55`,flexShrink:0}}>
                 <Pause className="h-5 w-5 fill-current"/>
               </button>
               <button onClick={()=>{ if(playlistAudioRef.current) playlistAudioRef.current.currentTime=Math.min(playlistDuration,playlistCurrentTime+10); }}
-                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                +10
-              </button>
-              <button onClick={()=>{ const pl=playlists.find(p=>p.id===playingPlaylistId); const ps=pl?items.filter(s=>pl.songIds.includes(s.id)):[]; if(playlistQueueIndex<ps.length-1) playPlaylistSong(playingPlaylistId,playlistQueueIndex+1); }}
-                disabled={(() => { const pl=playlists.find(p=>p.id===playingPlaylistId); const ps=pl?items.filter(s=>pl.songIds.includes(s.id)):[]; return playlistQueueIndex>=ps.length-1; })()}
-                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",opacity:(()=>{ const pl=playlists.find(p=>p.id===playingPlaylistId); const ps=pl?items.filter(s=>pl.songIds.includes(s.id)):[]; return playlistQueueIndex>=ps.length-1?0.3:1; })()}}>
-                ⏭
-              </button>
+                style={{width:38,height:38,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>+10</button>
+              <button onClick={()=>{ if(!isLast) playPlaylistSong(playingPlaylistId,playlistQueueIndex+1); }}
+                style={{width:40,height:40,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",opacity:isLast?0.25:1}}>⏭</button>
             </div>
           </div>
         );
@@ -2947,16 +3917,19 @@ function QuickMediaVault() {
               {/* Row header */}
               <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",cursor:"pointer"}}
                 onClick={()=>setExpandedPlaylistId(isExpanded?null:playlist.id)}>
-                {/* Play button */}
-                <button
-                  onClick={e=>{e.stopPropagation(); isActive ? stopPlaylist() : playPlaylistSong(playlist.id,0);}}
-                  style={{width:40,height:40,borderRadius:"50%",border:"none",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
-                    background: isActive ? `linear-gradient(135deg,${t.glowA},${t.glowB})` : t.input,
-                    color: isActive ? "#fff" : t.muted,
-                    boxShadow: isActive ? `0 2px 12px ${t.glowA}44` : "none",
-                  }}>
-                  {isActive ? <Pause className="h-4 w-4 fill-current"/> : <Play className="h-4 w-4 fill-current ml-0.5"/>}
-                </button>
+                {/* Cover art + play button */}
+                <div style={{position:"relative",width:44,height:44,flexShrink:0,borderRadius:12,overflow:"hidden"}}>
+                  {playlist.cover && <img src={playlist.cover} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} />}
+                  <button
+                    onClick={e=>{e.stopPropagation(); isActive ? stopPlaylist() : playPlaylistSong(playlist.id,0);}}
+                    style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+                      background: playlist.cover ? "rgba(0,0,0,.38)" : isActive ? `linear-gradient(135deg,${t.glowA},${t.glowB})` : t.input,
+                      color: playlist.cover || isActive ? "#fff" : t.muted,
+                      boxShadow: isActive ? `0 2px 12px ${t.glowA}44` : "none",
+                    }}>
+                    {isActive ? <Pause className="h-4 w-4 fill-current"/> : <Play className="h-4 w-4 fill-current ml-0.5"/>}
+                  </button>
+                </div>
                 <div style={{flex:1,minWidth:0}}>
                   <p style={{fontSize:14,fontWeight:700,color:t.text,margin:"0 0 2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{playlist.name}</p>
                   <p style={{fontSize:11,color:t.muted,margin:0}}>{pSongs.length} track{pSongs.length!==1?"s":""}</p>
@@ -2969,11 +3942,34 @@ function QuickMediaVault() {
               </div>
 
               {/* Expanded: track list + add songs */}
-              {isExpanded && (
-                <div style={{padding:"0 14px 14px",animation:"reveal 200ms ease both"}}>
+              {isExpanded && (() => {
+                const plCoverRef = React.createRef();
+                return (
+                <div style={{padding:"0 14px 14px",animation:"contextIn 220ms var(--spring-snappy) both"}}>
                   <div style={{height:1,background:t.border,marginBottom:10}}/>
+                  {/* Cover art picker */}
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                    <label style={{position:"relative",width:48,height:48,borderRadius:12,overflow:"hidden",flexShrink:0,cursor:"pointer",background:playlist.cover?"transparent":`${t.glowA}18`,border:`1px dashed ${t.border}`}}>
+                      {playlist.cover && <img src={playlist.cover} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>}
+                      <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:playlist.cover?"rgba(0,0,0,.35)":"transparent"}}>
+                        <Camera style={{width:18,height:18,color:playlist.cover?"#fff":t.muted}}/>
+                      </div>
+                      <input type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
+                        const f=e.target.files?.[0]; if(!f)return;
+                        const c=await compressCoverArt(f);
+                        if(c) setPlaylists(prev=>prev.map(p=>p.id===playlist.id?{...p,cover:c}:p));
+                        e.target.value="";
+                      }}/>
+                    </label>
+                    <div>
+                      <p style={{fontSize:12,fontWeight:600,color:t.text,margin:"0 0 2px"}}>{playlist.cover?"Change cover":"Add cover"}</p>
+                      {playlist.cover && <button onClick={()=>setPlaylists(prev=>prev.map(p=>p.id===playlist.id?{...p,cover:null}:p))} style={{fontSize:11,color:t.muted,background:"none",border:"none",cursor:"pointer",padding:0}}>Remove</button>}
+                    </div>
+                  </div>
                   {/* Tracks */}
-                  {pSongs.length===0 && <p style={{fontSize:12,color:t.muted,textAlign:"center",padding:"12px 0"}}>No tracks yet — add some below</p>}
+                  {pSongs.length===0 && (
+                    <p className="type-secondary" style={{color:t.muted,textAlign:"center",padding:"10px 0"}}>No tracks yet — add some below</p>
+                  )}
                   {pSongs.map((song,idx)=>(
                     <div key={song.id} onClick={()=>playPlaylistSong(playlist.id,idx)}
                       style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:12,cursor:"pointer",
@@ -3009,7 +4005,8 @@ function QuickMediaVault() {
                     </>
                   )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           );
         })}
@@ -3028,52 +4025,144 @@ function QuickMediaVault() {
       </div>
 
       {playlists.length===0 && (
-        <div style={{textAlign:"center",padding:"24px 0",color:t.muted,fontSize:13}}>Create a playlist to organise your audio</div>
+        <EmptyState
+          icon={Music}
+          label="No playlists yet"
+          cta={null}
+          t={t}
+        />
       )}
     </div>
   );
 
-  const currentPage = page === "vault" ? vaultPage : page === "creative" ? creativePage : page === "folders" ? foldersPage : playlistPage;
+  const pageTitle = page === "creative" ? "Sandbox" : page === "playlists" ? "Playlist" : page === "folders" ? "Vault" : "Flare";
+  const profilePage = <ProfilePage t={t} currentUser={currentUser} setCurrentUser={setCurrentUser} />;
+  const currentPage = page === "vault" ? vaultPage : page === "creative" ? creativePage : page === "folders" ? foldersPage : page === "profile" ? profilePage : playlistPage;
 
   return (
-    <div className="theme-bg min-h-screen px-4" style={{ background: t.page, color: t.text, paddingTop: "max(20px, env(safe-area-inset-top))", paddingBottom: "calc(7rem + env(safe-area-inset-bottom))" }}>
+    <div className="theme-bg min-h-screen px-4" style={{ background: t.page, color: t.text, paddingTop: 0, paddingBottom: "calc(7rem + env(safe-area-inset-bottom))" }}>
       <Styles />
-      {/* Fixed background — prevents white overscroll flash */}
+      {/* Fixed background — prevents overscroll flash */}
       <div style={{ position: "fixed", inset: 0, background: t.page, zIndex: -1 }} />
+      {/* Ambient glow orbs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -left-32 -top-16 h-96 w-96 rounded-full blur-3xl" style={{ background: t.glowA, opacity: theme === "dark" ? 0.15 : 0.22 }} />
         <div className="absolute -right-32 top-48 h-80 w-80 rounded-full blur-3xl" style={{ background: t.glowC, opacity: theme === "dark" ? 0.13 : 0.18 }} />
         <div className="absolute left-1/2 top-[60%] h-64 w-64 -translate-x-1/2 rounded-full blur-3xl" style={{ background: t.glowB, opacity: theme === "dark" ? 0.1 : 0.12 }} />
       </div>
-      <div className="relative mx-auto max-w-md">
-        <header className="mb-6 flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-[2rem] font-bold tracking-tight leading-none" style={{ color: t.text }}>{page === "creative" ? "Sandbox" : page === "playlists" ? "Playlist" : page === "folders" ? "Vault" : "Flare"}</h1>
-            <p className="mt-2 text-xs font-semibold tracking-[0.18em] uppercase" style={{ color: t.muted }}>By Loveem, For You.</p>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <VibeDropdown theme={theme} setTheme={setTheme} t={t} customThemes={customThemes} setCustomThemes={setCustomThemes} />
-            <SyncStatus status={syncStatus} t={t} />
-          </div>
-        </header>
 
-        <div key={page} style={{ animation: "pageFade 300ms cubic-bezier(0.4,0,0.2,1) both" }}>{currentPage}</div>
+      {/* ── Header ── */}
+      <div style={{ paddingTop: "max(0px, env(safe-area-inset-top))" }}>
+        <div className="mx-auto max-w-md">
+          <header style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "28px 0 20px" }}>
+            <div style={{ minWidth: 0 }}>
+              <FlareTitle t={t} />
+              <p className="type-label" style={{ color: t.muted, marginTop: 6, letterSpacing: "0.18em" }}>By Loveem, For You.</p>
+            </div>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+              style={{
+                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                width: 40, height: 40, borderRadius: "50%", border: `1px solid ${t.border}`,
+                background: t.panel, color: t.muted, cursor: "pointer",
+                boxShadow: `0 0 16px ${t.glowA}22`,
+                backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+              }}
+            >
+              <SettingsIcon style={{ width: 18, height: 18 }} />
+            </button>
+          </header>
+        </div>
+      </div>
+
+      {/* ── Page content ── */}
+      <div className="relative mx-auto max-w-md" style={{ paddingTop: 8 }}>
+        <div key={page} style={{ animation: "pageFade 320ms var(--spring-smooth) both" }}>
+          {currentPage}
+        </div>
       </div>
 
       {boardSession && <BoardView session={boardSession} t={t} theme={theme} vaultItems={items}
         onSave={(nodes) => setSessions(prev => prev.map(s => s.id === boardSession.id ? {...s, nodes} : s))}
         onClose={() => setBoardSession(null)} />}
-      <AddTrayPanel open={addOpen} t={t} theme={theme} inputStyle={inputStyle} mediaMode={mediaMode} setMediaMode={setMediaMode} url={url} note={note} folder={folder} setUrl={setUrl} setNote={setNote} setFolder={setFolder} addItem={addItem} addImageFile={addImageFile} addAudioFile={addAudioFile} onVoiceRecord={() => setVoiceRecorderOpen(true)} close={() => setAddOpen(false)} />
-      <VoiceRecorder open={voiceRecorderOpen} t={t} onRecord={(recording) => { setItems((current) => [{ id: newId(), type: "song", title: recording.title, url: recording.url, note: recording.note || "", folder, createdAt: Date.now() }, ...current]); setActiveFilter("audio"); setVoiceRecorderOpen(false); }} close={() => setVoiceRecorderOpen(false)} />
+      <AddTrayPanel open={addOpen} t={t} theme={theme} inputStyle={inputStyle} mediaMode={mediaMode} setMediaMode={setMediaMode} url={url} note={note} folder={folder} setUrl={setUrl} setNote={setNote} setFolder={setFolder} addItem={addItem} addImageFile={addImageFile} addAudioFile={addAudioFile} addPdfFile={addPdfFile} onVoiceRecord={() => setVoiceRecorderOpen(true)} close={() => setAddOpen(false)} />
+      <VoiceRecorder open={voiceRecorderOpen} t={t} onRecord={(recording) => {
+        const id = newId();
+        if (recording.url) audioBlobUrlCache.set(id, recording.url);
+        setItems(current => [{
+          id, type: "song",
+          title: recording.title,
+          url: recording.url,
+          hasAudio: true,
+          note: recording.note || "",
+          folder, createdAt: Date.now()
+        }, ...current]);
+        markNew(id);
+        setActiveFilter("audio");
+        setVoiceRecorderOpen(false);
+        if (recording.blob) {
+          recording.blob.arrayBuffer()
+            .then(buf => saveAudioBlob(id, buf, recording.blob.type || "audio/webm"))
+            .catch(e => console.error("Failed to save voice memo:", e));
+        }
+      }} close={() => setVoiceRecorderOpen(false)} />
       <ExpandedPost item={expandedItem} t={t} theme={theme} activeAudioId={activeAudioId} setActiveAudioId={setActiveAudioId} patchItem={patchItem} close={() => setExpandedItemId(null)} />
 
-      {!boardSession && <nav className="theme-bg fixed inset-x-4 z-20 mx-auto grid max-w-sm grid-cols-5 items-center gap-1 rounded-[1.6rem] p-1.5 backdrop-blur-2xl" style={{ bottom: "max(12px, env(safe-area-inset-bottom))", background: t.panel, boxShadow: `${t.shadow}, 0 0 40px ${t.glowA}22`, border: `1px solid ${t.border}` }}>
-        <NavButton active={page === "vault"} icon={Feed} label="Feed" onClick={() => { setAddOpen(false); setPage("vault"); }} t={t} />
-        <NavButton active={page === "creative"} icon={Sparkles} label="Sandbox" onClick={() => { setAddOpen(false); setPage("creative"); }} t={t} />
-        <button onClick={() => { setAddOpen((open) => !open); }} aria-label="Add" className="mx-auto flex h-12 w-12 items-center justify-center rounded-full transition active:scale-95" style={{ background: primaryBg, color: primaryText, boxShadow: addOpen ? `0 0 22px ${t.glowA}` : "0 10px 24px rgba(0,0,0,.24)" }}><Plus className="h-5 w-5" /></button>
-        <NavButton active={page === "folders"} icon={Vault} label="Vault" onClick={() => { setAddOpen(false); setPage("folders"); }} t={t} />
-        <NavButton active={page === "playlists"} icon={Music} label="Playlist" onClick={() => { setAddOpen(false); setPage("playlists"); }} t={t} />
-      </nav>}
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        t={t}
+        theme={theme} setTheme={setTheme}
+        currentUser={currentUser} setCurrentUser={setCurrentUser}
+        onGoProfile={() => setPage("profile")}
+      />
+
+      {!boardSession && (
+        <nav
+          style={{
+            position: "fixed", bottom: "max(12px, env(safe-area-inset-bottom))",
+            left: "50%", transform: "translateX(-50%)",
+            width: "calc(100% - 32px)", maxWidth: 384,
+            display: "grid", gridTemplateColumns: "repeat(5, 1fr)",
+            alignItems: "center", gap: 4,
+            borderRadius: 26, padding: 6,
+            background: t.panel,
+            backdropFilter: "blur(28px) saturate(160%)",
+            WebkitBackdropFilter: "blur(28px) saturate(160%)",
+            boxShadow: `${t.shadow}, 0 0 40px ${t.glowA}22`,
+            border: `0.5px solid ${t.border}`,
+            zIndex: 20,
+          }}
+        >
+          <NavButton active={page === "vault"} icon={Feed} label="Feed" onClick={() => { setAddOpen(false); setPage("vault"); window.scrollTo({top:0,behavior:"smooth"}); }} t={t} />
+          <NavButton active={page === "creative"} icon={Sparkles} label="Sandbox" onClick={() => { setAddOpen(false); setPage("creative"); }} t={t} />
+          {/* FAB — centre button */}
+          <button
+            onClick={() => setAddOpen(o => !o)}
+            aria-label="Add"
+            className="fab"
+            style={{
+              margin: "0 auto",
+              display: "flex", width: 48, height: 48,
+              alignItems: "center", justifyContent: "center",
+              borderRadius: "50%", border: "none", cursor: "pointer",
+              background: primaryBg, color: "#fff",
+              boxShadow: addOpen
+                ? `0 0 0 4px ${t.glowA}44, 0 0 28px ${t.glowA}77`
+                : "0 6px 20px rgba(0,0,0,.28)",
+            }}
+          >
+            <Plus style={{
+              width: 22, height: 22,
+              transform: addOpen ? "rotate(45deg)" : "rotate(0deg)",
+              transition: "transform 260ms var(--spring-snappy)",
+            }} />
+          </button>
+          <NavButton active={page === "folders"} icon={Vault} label="Vault" onClick={() => { setAddOpen(false); setPage("folders"); }} t={t} />
+          <NavButton active={page === "playlists"} icon={Music} label="Playlist" onClick={() => { setAddOpen(false); setPage("playlists"); }} t={t} />
+        </nav>
+      )}
     </div>
   );
 }
