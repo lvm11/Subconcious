@@ -4147,7 +4147,7 @@ function QuickMediaVault() {
         <div style={{
           position:"fixed", inset:0, zIndex:9, pointerEvents:"none",
           mixBlendMode: "screen",
-          background:`radial-gradient(ellipse 100% 65% at 50% 105%, ${t.glowA}${Math.round((bassLevel*0.75+0.08)*99).toString(16).padStart(2,"0")}, ${t.glowB}${Math.round((bassLevel*0.5+0.04)*99).toString(16).padStart(2,"0")} 45%, transparent 72%)`,
+          background:`radial-gradient(ellipse 110% 70% at 50% 105%, ${t.glowA}${Math.min(255,Math.round((bassLevel*1.1+0.12)*99)).toString(16).padStart(2,"0")}, ${t.glowB}${Math.min(255,Math.round((bassLevel*0.75+0.06)*99)).toString(16).padStart(2,"0")} 45%, transparent 72%)`,
         }}/>
       )}
 
