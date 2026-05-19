@@ -534,8 +534,18 @@ function useAudioPlayback(item, activeAudioId, setActiveAudioId) {
     if (!expanded) setActiveAudioId(item.id);
     if (isPlaying) { stopPlayback(); setActiveAudioId(null); return; }
     if (playable && audioRef.current) {
-      try { await ensureAudioAnalyser(); await audioRef.current.play(); setIsPlaying(true); pumpSpectrum(); return; } catch {}
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+        // Analyser is optional — don't block playback if it fails
+        ensureAudioAnalyser().then(() => pumpSpectrum()).catch(() => {});
+      } catch {
+        // Audio play failed — nothing to fall back to
+        setIsPlaying(false);
+      }
+      return;
     }
+    // Non-playable item: synth preview
     await startSynthPreview();
     setIsPlaying(true);
     pumpSpectrum();
@@ -1536,18 +1546,22 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
   ) : null;
 
   if (node.type === "text") {
+    const [editing, setEditing] = useState(node.text === "");
+    useEffect(() => { if (!selected) setEditing(false); }, [selected]);
+    const textareaRef = useRef(null);
     const fontSizes = [12,16,20,28,36,48];
     const fmBg = boardDark ? "rgba(18,20,38,.95)" : "rgba(250,250,248,.95)";
     const fmBorder = boardDark ? "rgba(255,255,255,.1)" : "rgba(0,0,0,.1)";
     const fmActive = boardDark ? "rgba(255,255,255,.18)" : "rgba(0,0,0,.13)";
     const fmText = boardDark ? "#fff" : "#111";
     const fmMuted = boardDark ? "rgba(255,255,255,.38)" : "rgba(0,0,0,.35)";
+    const enterEdit = (e) => { e.stopPropagation(); setEditing(true); setTimeout(() => textareaRef.current?.focus(), 30); };
     return (
       <div data-node-id={node.id} style={{position:"absolute",left:node.x,top:node.y}} onClick={onClick}>
         {delBtn}
         {dragHandle}
         {selected && (
-          <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-50,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:10,padding:"4px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.3)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:20,overflowX:"auto",maxWidth:"90vw"}}>
+          <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-54,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:10,padding:"4px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.3)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:20,overflowX:"auto",maxWidth:"90vw"}}>
             <button onClick={()=>onUpdate({bold:!node.bold})} style={{fontWeight:"bold",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.bold?fmActive:"transparent",color:node.bold?fmText:fmMuted,flexShrink:0}}>B</button>
             <button onClick={()=>onUpdate({italic:!node.italic})} style={{fontStyle:"italic",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.italic?fmActive:"transparent",color:node.italic?fmText:fmMuted,flexShrink:0}}>I</button>
             <div style={{width:1,height:16,background:fmBorder,margin:"0 2px",flexShrink:0}}/>
@@ -1561,22 +1575,36 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
               <button key={c} onClick={()=>onUpdate({color:c})}
                 style={{width:18,height:18,borderRadius:"50%",background:c,border:(node.color||"#ffffff")===c?`2px solid ${fmText}`:"1.5px solid rgba(128,128,128,.3)",cursor:"pointer",flexShrink:0,boxShadow:c==="#ffffff"?"inset 0 0 0 1px rgba(0,0,0,.2)":"none"}} />
             ))}
+            <div style={{width:1,height:16,background:fmBorder,margin:"0 2px",flexShrink:0}}/>
+            <button onPointerDown={e=>e.stopPropagation()} onClick={enterEdit}
+              style={{fontSize:9,height:22,padding:"0 8px",border:"none",borderRadius:6,cursor:"pointer",fontWeight:700,background:editing?fmActive:"transparent",color:editing?fmText:fmMuted,flexShrink:0,whiteSpace:"nowrap"}}>
+              {editing ? "✓ Done" : "Edit"}
+            </button>
           </div>
         )}
+        {/* Tap-to-select overlay shown when NOT editing */}
+        {!editing && (
+          <div onPointerDown={e=>e.stopPropagation()} onDoubleClick={enterEdit}
+            style={{position:"absolute",inset:0,cursor:isSelect?"default":"text",zIndex:5,borderRadius:4,
+              outline:selected?"2px solid rgba(23,104,255,.4)":"none"}} />
+        )}
         <textarea
+          ref={textareaRef}
           value={node.text}
           onChange={e=>onUpdate({text:e.target.value})}
-          onPointerDown={e=>e.stopPropagation()}
-          autoFocus={node.text===""}
+          onPointerDown={e=>{ if(!editing) e.stopPropagation(); }}
+          readOnly={!editing}
           placeholder="Type here…"
           onInput={e=>{e.target.style.height="auto";e.target.style.height=e.target.scrollHeight+"px";}}
           style={{display:"block",background:"transparent",border:"none",outline:"none",resize:"none",fontFamily:"inherit",
-            padding:"2px 4px",margin:0,lineHeight:1.45,cursor:"text",
+            padding:"2px 4px",margin:0,lineHeight:1.45,
+            cursor: editing ? "text" : "default",
             width:node.w||200, minWidth:80, minHeight:30,
             fontSize:node.fontSize||16,
             color:node.color||(boardDark?"#fff":"#111"),
             fontWeight:node.bold?"bold":"normal",
             fontStyle:node.italic?"italic":"normal",
+            pointerEvents: editing ? "auto" : "none",
           }}
         />
       </div>
@@ -1599,15 +1627,39 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
     </div>
   );
 
-  if (node.type === "vault") { const {item} = node; return (
-    <div data-node-id={node.id} style={{...baseStyle, width:node.w||240, background:isDark?"#1a1d2e":"#fff", overflow:"hidden"}}
+  if (node.type === "vault") { const {item} = node;
+    const isSong = item.type === "song" && item.url;
+    const [audioPlaying, setAudioPlaying] = useState(false);
+    const boardAudioRef = useRef(null);
+    const toggleAudio = (e) => {
+      e.stopPropagation();
+      const audio = boardAudioRef.current;
+      if (!audio) return;
+      if (audioPlaying) { audio.pause(); setAudioPlaying(false); }
+      else { audio.play().then(() => setAudioPlaying(true)).catch(() => {}); }
+    };
+    return (
+    <div data-node-id={node.id} style={{...baseStyle, width:node.w||240, background:"#fff", overflow:"hidden"}}
       onClick={onClick}>
       {delBtn}
       {dragHandle}
-      {item.type==="image" && item.url && <img src={item.url} alt={item.title} style={{width:"100%",height:140,objectFit:"cover",display:"block",pointerEvents:"none"}} />}
-      <div style={{padding:"10px 14px 12px"}}>
-        <p style={{fontSize:12,fontWeight:700,color:isDark?"#eef":"#111",margin:0,marginBottom:item.note?4:0}}>{item.title}</p>
-        {item.note && <p style={{fontSize:11,color:isDark?"#8892aa":"#666",margin:0,lineHeight:1.5}}>{item.note.slice(0,90)}{item.note.length>90?"…":""}</p>}
+      {isSong && <audio ref={boardAudioRef} src={item.url} onEnded={()=>setAudioPlaying(false)} style={{display:"none"}} />}
+      {item.type==="image" && item.url && <img src={item.url} alt={item.title} style={{width:"100%",height:120,objectFit:"cover",display:"block",pointerEvents:"none"}} />}
+      <div style={{padding:"8px 12px 10px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {isSong && (
+            <button onPointerDown={e=>e.stopPropagation()} onClick={toggleAudio}
+              style={{width:30,height:30,borderRadius:"50%",background:"#1768FF",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 2px 8px rgba(23,104,255,.4)"}}>
+              {audioPlaying
+                ? <span style={{width:8,height:8,display:"flex",gap:2}}><span style={{width:3,height:8,background:"#fff",borderRadius:1}}/><span style={{width:3,height:8,background:"#fff",borderRadius:1}}/></span>
+                : <span style={{width:0,height:0,borderTop:"5px solid transparent",borderBottom:"5px solid transparent",borderLeft:"8px solid #fff",marginLeft:2}}/>}
+            </button>
+          )}
+          <div style={{minWidth:0,flex:1}}>
+            <p style={{fontSize:12,fontWeight:700,color:"#111",margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</p>
+            {item.note && <p style={{fontSize:10,color:"#666",margin:"2px 0 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.note.slice(0,60)}</p>}
+          </div>
+        </div>
       </div>
     </div>
   );}
@@ -1623,50 +1675,40 @@ function CreativeSessions({ t, theme, sessions, onOpen, onCreate, onDelete, onRe
   const commitRename = (id) => { if (renameVal.trim()) onRename(id, renameVal.trim()); setRenamingId(null); };
 
   return (
-    <div className="space-y-4 pt-1">
-      <div className="grid grid-cols-2 gap-3">
-        {sessions.map(s => (
-          <div key={s.id} className="relative">
-            <button onClick={() => onOpen(s)}
-              style={{width:"100%",background:t.panel,border:`1px solid ${t.border}`,borderRadius:20,padding:"18px 14px 14px",textAlign:"left",cursor:"pointer",boxShadow:t.shadow,display:"block"}}>
-              <div style={{height:72,borderRadius:12,marginBottom:12,background:isDark?"rgba(255,255,255,.04)":"rgba(0,0,0,.04)",display:"flex",alignItems:"center",justifyContent:"center",border:`1px solid ${t.border}`}}>
-                {s.nodes.length > 0
-                  ? <span style={{fontSize:11,color:t.muted}}>{s.nodes.length} item{s.nodes.length!==1?"s":""}</span>
-                  : <span style={{fontSize:22,opacity:.3}}>✦</span>}
-              </div>
-              {renamingId === s.id ? (
-                <input
-                  value={renameVal}
-                  onChange={e => setRenameVal(e.target.value)}
-                  onBlur={() => commitRename(s.id)}
-                  onKeyDown={e => { if(e.key==="Enter") commitRename(s.id); if(e.key==="Escape") setRenamingId(null); }}
-                  autoFocus
-                  onClick={e => e.stopPropagation()}
-                  style={{width:"100%",background:"transparent",border:"none",outline:`1px solid ${t.border}`,borderRadius:6,fontSize:13,fontWeight:700,color:t.text,padding:"2px 4px"}}
-                />
-              ) : (
-                <p style={{fontSize:13,fontWeight:700,color:t.text,margin:0,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
-              )}
-              <p style={{fontSize:10,color:t.muted,margin:0}}>{new Date(s.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</p>
-            </button>
-            {/* Rename button */}
-            <button onClick={e => startRename(s, e)}
-              style={{position:"absolute",top:8,left:8,width:24,height:24,background:"rgba(128,128,128,.18)",border:"none",borderRadius:"50%",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <Pencil style={{width:10,height:10,color:t.muted}} />
-            </button>
-            {/* Delete button */}
-            <button onClick={e => { e.stopPropagation(); onDelete(s.id); }}
-              style={{position:"absolute",top:8,right:8,width:24,height:24,background:"rgba(255,100,100,.18)",border:"none",borderRadius:"50%",cursor:"pointer",fontSize:14,color:"#ff6b6b",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+    <div className="space-y-2 pt-1">
+      {sessions.map(s => (
+        <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,background:t.panel,border:`1px solid ${t.border}`,borderRadius:14,padding:"10px 12px",boxShadow:t.shadow}}>
+          {/* Thumbnail dot */}
+          <div onClick={() => onOpen(s)} style={{width:36,height:36,borderRadius:10,background:isDark?"rgba(255,255,255,.06)":"rgba(0,0,0,.05)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:"pointer",border:`1px solid ${t.border}`}}>
+            <span style={{fontSize:s.nodes.length>0?10:16,color:t.muted,fontWeight:600}}>{s.nodes.length>0?s.nodes.length:"✦"}</span>
           </div>
-        ))}
-        <button onClick={onCreate}
-          style={{background:"transparent",border:`1.5px dashed ${t.border}`,borderRadius:20,padding:"18px 14px",textAlign:"center",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,minHeight:140}}>
-          <div style={{width:36,height:36,borderRadius:"50%",background:t.input,display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <Plus className="h-5 w-5" style={{color:t.muted}} />
+          {/* Name / rename */}
+          <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={() => onOpen(s)}>
+            {renamingId === s.id ? (
+              <input value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+                onBlur={()=>commitRename(s.id)}
+                onKeyDown={e=>{if(e.key==="Enter")commitRename(s.id);if(e.key==="Escape")setRenamingId(null);}}
+                autoFocus onClick={e=>e.stopPropagation()}
+                style={{width:"100%",background:"transparent",border:"none",outline:`1px solid ${t.border}`,borderRadius:6,fontSize:13,fontWeight:700,color:t.text,padding:"1px 4px"}} />
+            ) : (
+              <p style={{fontSize:13,fontWeight:700,color:t.text,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
+            )}
+            <p style={{fontSize:10,color:t.muted,margin:"1px 0 0"}}>{new Date(s.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</p>
           </div>
-          <p style={{fontSize:12,fontWeight:600,color:t.muted,margin:0}}>New Board</p>
-        </button>
-      </div>
+          {/* Actions */}
+          <button onClick={e=>startRename(s,e)} style={{width:28,height:28,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <Pencil style={{width:13,height:13,color:t.muted}} />
+          </button>
+          <button onClick={e=>{e.stopPropagation();onDelete(s.id);}} style={{width:28,height:28,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",fontSize:16,color:"rgba(255,100,100,.7)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>×</button>
+        </div>
+      ))}
+      <button onClick={onCreate}
+        style={{width:"100%",background:"transparent",border:`1.5px dashed ${t.border}`,borderRadius:14,padding:"10px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:10}}>
+        <div style={{width:36,height:36,borderRadius:10,background:t.input,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Plus className="h-4 w-4" style={{color:t.muted}} />
+        </div>
+        <p style={{fontSize:13,fontWeight:600,color:t.muted,margin:0}}>New Board</p>
+      </button>
     </div>
   );
 }
@@ -2106,51 +2148,9 @@ function QuickMediaVault() {
     };
   }, []);
 
-  useEffect(() => {
-    const audio = playlistAudioRef.current;
-    if (!audio || !playingPlaylistId) return;
-    const playlist = playlists.find(p => p.id === playingPlaylistId);
-    if (!playlist) return;
-    const playlistSongs = items.filter(s => playlist.songIds.includes(s.id));
-    if (playlistQueueIndex >= playlistSongs.length) return;
-    const song = playlistSongs[playlistQueueIndex];
-    audio.src = song?.url || "";
-    const playWhenReady = () => {
-      audio.play().catch(() => {});
-      audio.removeEventListener("canplay", playWhenReady);
-    };
-    audio.addEventListener("canplay", playWhenReady);
-    audio.play().catch(() => {});
-  }, [playingPlaylistId, playlistQueueIndex, playlists, items]);
+  // Playlist audio src is now set directly in playPlaylistSong() — no useEffect needed
 
-  useEffect(() => {
-    const audio = playlistAudioRef.current;
-    if (!audio || !playingPlaylistId) return;
-
-    playlistAdvancedRef.current = false;
-
-    const handleTimeUpdate = () => {
-      if (!audio.duration || isNaN(audio.duration)) return;
-      if (audio.currentTime >= audio.duration - 0.5 && !playlistAdvancedRef.current) {
-        playlistAdvancedRef.current = true;
-        setPlaylistQueueIndex(prev => prev + 1);
-      }
-    };
-
-    const handleEnded = () => {
-      if (!playlistAdvancedRef.current) {
-        playlistAdvancedRef.current = true;
-        setPlaylistQueueIndex(prev => prev + 1);
-      }
-    };
-
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("ended", handleEnded);
-    return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("ended", handleEnded);
-    };
-  }, [playingPlaylistId, playlistQueueIndex]);
+  // Track advancement is handled via onEnded prop on the <audio> element in playlistPage
 
   useEffect(() => {
     const audio = playlistAudioRef.current;
@@ -2503,129 +2503,204 @@ function QuickMediaVault() {
   const deletePlaylist = (id) => setPlaylists(playlists.filter(p => p.id !== id));
   const addSongToPlaylist = (playlistId, songId) => setPlaylists(playlists.map(p => p.id === playlistId ? { ...p, songIds: p.songIds.includes(songId) ? p.songIds.filter(id => id !== songId) : [...p.songIds, songId] } : p));
 
+  // Playlist: play a song directly from a user gesture (avoids iOS autoplay block)
+  const playPlaylistSong = (pId, idx) => {
+    const playlist = playlists.find(p => p.id === pId);
+    if (!playlist) return;
+    const pSongs = items.filter(s => playlist.songIds.includes(s.id));
+    const song = pSongs[idx];
+    if (!song || !playlistAudioRef.current) return;
+    playlistAudioRef.current.pause();
+    playlistAudioRef.current.src = song.url;
+    playlistAudioRef.current.load();
+    playlistAudioRef.current.play().catch(()=>{});
+    setPlayingPlaylistId(pId);
+    setPlaylistQueueIndex(idx);
+    setExpandedPlaylistId(pId);
+  };
+  const stopPlaylist = () => { playlistAudioRef.current?.pause(); setPlayingPlaylistId(null); };
+  const pct = playlistDuration > 0 ? (playlistCurrentTime / playlistDuration) * 100 : 0;
+  const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+
   const playlistPage = (
-    <div className="space-y-4">
-      <audio ref={playlistAudioRef} style={{ display: "none" }} onPause={() => { if (playingPlaylistId) setPlayingPlaylistId(null); }} onTimeUpdate={() => { if (playlistAudioRef.current) setPlaylistCurrentTime(playlistAudioRef.current.currentTime); }} onLoadedMetadata={() => { if (playlistAudioRef.current) setPlaylistDuration(playlistAudioRef.current.duration); }} />
-      <section className="rounded-[2rem] p-4 backdrop-blur-xl" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
-        <p className="text-sm font-semibold text-center mb-4" style={{ color: t.text }}>Create Playlist</p>
-        <div className="flex gap-2">
-          <input value={newPlaylistName} onChange={(event) => setNewPlaylistName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createPlaylist(); }} placeholder="Playlist name..." className="min-w-0 flex-1 rounded-2xl px-4 py-3 text-sm outline-none" style={inputStyle} />
-          <button onClick={createPlaylist} className="flex h-12 w-12 items-center justify-center rounded-2xl" style={{ background: primaryBg, color: primaryText }}><Plus className="h-4 w-4" /></button>
-        </div>
-      </section>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <audio ref={playlistAudioRef} style={{display:"none"}}
+        onPause={()=>{ if(playingPlaylistId) setPlayingPlaylistId(null); }}
+        onTimeUpdate={()=>{ if(playlistAudioRef.current) setPlaylistCurrentTime(playlistAudioRef.current.currentTime); }}
+        onLoadedMetadata={()=>{ if(playlistAudioRef.current) setPlaylistDuration(playlistAudioRef.current.duration); }}
+        onEnded={()=>{
+          const playlist = playlists.find(p=>p.id===playingPlaylistId);
+          const pSongs = playlist ? items.filter(s=>playlist.songIds.includes(s.id)) : [];
+          if(playlistQueueIndex < pSongs.length-1) playPlaylistSong(playingPlaylistId, playlistQueueIndex+1);
+          else setPlayingPlaylistId(null);
+        }}
+      />
 
-      <div className="space-y-3">
-        {playlists.map((playlist) => {
-          const playlistSongs = songs.filter(s => playlist.songIds.includes(s.id));
-          const isPlaying = playingPlaylistId === playlist.id;
+      {/* ── NOW PLAYING CARD ── */}
+      {playingPlaylistId && (() => {
+        const pl = playlists.find(p=>p.id===playingPlaylistId);
+        const pSongs = pl ? items.filter(s=>pl.songIds.includes(s.id)) : [];
+        const song = pSongs[playlistQueueIndex];
+        if (!song) return null;
+        return (
+          <div style={{borderRadius:24,overflow:"hidden",background:`linear-gradient(145deg,${t.glowA}22,${t.glowB}18,${t.panel})`,border:`1px solid ${t.border}`,boxShadow:t.shadow,padding:"20px 18px 16px"}}>
+            {/* Song info */}
+            <div style={{marginBottom:14}}>
+              <p style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,margin:"0 0 4px"}}>{pl.name}</p>
+              <p style={{fontSize:18,fontWeight:800,color:t.text,margin:"0 0 2px",lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</p>
+              {song.note && <p style={{fontSize:12,color:t.muted,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.note}</p>}
+            </div>
+
+            {/* Waveform */}
+            <svg viewBox="0 0 300 40" style={{width:"100%",height:40,display:"block",marginBottom:10}}>
+              <defs>
+                <linearGradient id="plGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={t.glowA} stopOpacity="1"/>
+                  <stop offset="100%" stopColor={t.glowB} stopOpacity="0.3"/>
+                </linearGradient>
+              </defs>
+              <path d={buildFluidPath(playlistFluidSpectrum.map(v=>Math.max(0.08,v)),300,40)} fill="url(#plGrad)" opacity="0.9"/>
+            </svg>
+
+            {/* Scrubber */}
+            <div style={{marginBottom:10}}>
+              <div style={{position:"relative",height:4,borderRadius:2,background:t.input,marginBottom:4,cursor:"pointer"}}
+                onClick={e=>{
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const ratio = (e.clientX-rect.left)/rect.width;
+                  if(playlistAudioRef.current&&playlistDuration) playlistAudioRef.current.currentTime=ratio*playlistDuration;
+                }}>
+                <div style={{position:"absolute",left:0,top:0,height:"100%",borderRadius:2,background:`linear-gradient(90deg,${t.glowA},${t.glowB})`,width:`${pct}%`,transition:"width 0.5s linear"}}/>
+                <div style={{position:"absolute",top:"50%",transform:"translate(-50%,-50%)",width:12,height:12,borderRadius:"50%",background:t.glowA,boxShadow:`0 0 6px ${t.glowA}`,left:`${pct}%`,transition:"left 0.5s linear"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:t.muted}}>
+                <span>{fmt(playlistCurrentTime)}</span><span>{fmt(playlistDuration||0)}</span>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16}}>
+              <button onClick={()=>{ if(playlistQueueIndex>0) playPlaylistSong(playingPlaylistId,playlistQueueIndex-1); }}
+                disabled={playlistQueueIndex===0}
+                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",opacity:playlistQueueIndex===0?0.3:1}}>
+                ⏮
+              </button>
+              <button onClick={()=>{ if(playlistAudioRef.current) playlistAudioRef.current.currentTime=Math.max(0,playlistCurrentTime-10); }}
+                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                −10
+              </button>
+              <button onClick={stopPlaylist}
+                style={{width:52,height:52,borderRadius:"50%",border:"none",cursor:"pointer",background:`linear-gradient(135deg,${t.glowA},${t.glowB})`,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 20px ${t.glowA}55`,flexShrink:0}}>
+                <Pause className="h-5 w-5 fill-current"/>
+              </button>
+              <button onClick={()=>{ if(playlistAudioRef.current) playlistAudioRef.current.currentTime=Math.min(playlistDuration,playlistCurrentTime+10); }}
+                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                +10
+              </button>
+              <button onClick={()=>{ const pl=playlists.find(p=>p.id===playingPlaylistId); const ps=pl?items.filter(s=>pl.songIds.includes(s.id)):[]; if(playlistQueueIndex<ps.length-1) playPlaylistSong(playingPlaylistId,playlistQueueIndex+1); }}
+                disabled={(() => { const pl=playlists.find(p=>p.id===playingPlaylistId); const ps=pl?items.filter(s=>pl.songIds.includes(s.id)):[]; return playlistQueueIndex>=ps.length-1; })()}
+                style={{width:36,height:36,borderRadius:"50%",border:"none",cursor:"pointer",background:t.input,color:t.text,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",opacity:(()=>{ const pl=playlists.find(p=>p.id===playingPlaylistId); const ps=pl?items.filter(s=>pl.songIds.includes(s.id)):[]; return playlistQueueIndex>=ps.length-1?0.3:1; })()}}>
+                ⏭
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── PLAYLISTS ── */}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {playlists.map(playlist => {
+          const pSongs = items.filter(s => playlist.songIds.includes(s.id));
+          const isActive = playingPlaylistId === playlist.id;
           const isExpanded = expandedPlaylistId === playlist.id;
-          const currentSong = isPlaying && playlistSongs.length > 0 ? playlistSongs[playlistQueueIndex] : null;
-
           return (
-            <section key={playlist.id} className="rounded-[2rem] backdrop-blur-xl" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
-              <div className="p-4">
-                <div className="flex items-center justify-between mb-3 cursor-pointer group" onClick={() => setExpandedPlaylistId(isExpanded ? null : playlist.id)}>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-sm" style={{ color: t.text }}>{playlist.name}</p>
-                    <p className="text-[10px]" style={{ color: t.muted }}>{playlistSongs.length} song{playlistSongs.length !== 1 ? 's' : ''}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <ChevronDown className="h-4 w-4 transition-transform" style={{ color: t.muted, transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)' }} />
-                    <button onClick={(e) => { e.stopPropagation(); deletePlaylist(playlist.id); }} className="flex h-10 w-10 items-center justify-center rounded-full active:scale-95 transition" style={{ background: t.input, color: t.muted }}><X className="h-4 w-4" /></button>
-                  </div>
+            <div key={playlist.id} style={{borderRadius:20,background:t.panel,border:`1px solid ${isActive?t.glowA:t.border}`,boxShadow:t.shadow,overflow:"hidden",transition:"border-color .2s"}}>
+              {/* Row header */}
+              <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",cursor:"pointer"}}
+                onClick={()=>setExpandedPlaylistId(isExpanded?null:playlist.id)}>
+                {/* Play button */}
+                <button
+                  onClick={e=>{e.stopPropagation(); isActive ? stopPlaylist() : playPlaylistSong(playlist.id,0);}}
+                  style={{width:40,height:40,borderRadius:"50%",border:"none",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
+                    background: isActive ? `linear-gradient(135deg,${t.glowA},${t.glowB})` : t.input,
+                    color: isActive ? "#fff" : t.muted,
+                    boxShadow: isActive ? `0 2px 12px ${t.glowA}44` : "none",
+                  }}>
+                  {isActive ? <Pause className="h-4 w-4 fill-current"/> : <Play className="h-4 w-4 fill-current ml-0.5"/>}
+                </button>
+                <div style={{flex:1,minWidth:0}}>
+                  <p style={{fontSize:14,fontWeight:700,color:t.text,margin:"0 0 2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{playlist.name}</p>
+                  <p style={{fontSize:11,color:t.muted,margin:0}}>{pSongs.length} track{pSongs.length!==1?"s":""}</p>
                 </div>
-
-                {/* Header - Clickable to expand/collapse */}
-                {playlistSongs.length > 0 && !isExpanded && (
-                  <div className="mb-3 p-2 rounded-2xl cursor-pointer transition" style={{ background: t.input }} onClick={() => setExpandedPlaylistId(playlist.id)}>
-                    <p className="text-xs font-semibold truncate" style={{ color: t.text }}>▶ {currentSong?.title || playlistSongs[0].title}</p>
-                  </div>
-                )}
+                <ChevronDown className="h-4 w-4" style={{color:t.muted,flexShrink:0,transition:"transform .2s",transform:isExpanded?"rotate(180deg)":"rotate(0)"}}/>
+                <button onClick={e=>{e.stopPropagation();deletePlaylist(playlist.id);}}
+                  style={{width:30,height:30,borderRadius:"50%",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:t.muted,flexShrink:0}}>
+                  <X className="h-4 w-4"/>
+                </button>
               </div>
 
-              {/* Expanded Player */}
+              {/* Expanded: track list + add songs */}
               {isExpanded && (
-                <div className="px-4 pb-4 pt-0" style={{ animation: "reveal 300ms ease both" }}>
-                  {isPlaying && currentSong && (
-                    <div className="mb-3 p-3 rounded-2xl" style={{ background: t.input }}>
-                      <p className="text-xs font-semibold truncate" style={{ color: t.text }}>Now Playing</p>
-                      <p className="text-sm font-bold truncate mt-1" style={{ color: t.glowA }}>{currentSong.title}</p>
-                      {currentSong.note && <p className="text-[10px] mt-1 line-clamp-2" style={{ color: t.muted }}>{currentSong.note}</p>}
-                    </div>
-                  )}
-                  {isPlaying && (
-                    <svg viewBox="0 0 200 60" className="w-full h-12 mb-3" style={{ display: "block" }}>
-                      <defs>
-                        <linearGradient id="playlistWaveGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" style={{ stopColor: t.glowA, stopOpacity: 1 }} />
-                          <stop offset="50%" style={{ stopColor: t.glowB, stopOpacity: 0.8 }} />
-                          <stop offset="100%" style={{ stopColor: t.glowC, stopOpacity: 0.6 }} />
-                        </linearGradient>
-                      </defs>
-                      <path d={buildFluidPath(playlistFluidSpectrum.map(v => Math.max(0.1, v)), 200, 30)} fill="url(#playlistWaveGrad)" opacity="0.8" />
-                      <path d={buildFluidPath(playlistFluidSpectrum.map(v => Math.max(0.05, v * 0.5)), 200, 30)} fill={t.glowA} opacity="0.4" />
-                    </svg>
-                  )}
-
-                  {/* Time Scrubber */}
-                  {isPlaying && (
-                    <div className="mb-3">
-                      <input type="range" min="0" max={playlistDuration || 0} value={playlistCurrentTime} onChange={(e) => { if (playlistAudioRef.current) playlistAudioRef.current.currentTime = Number(e.target.value); }} className="w-full h-1 rounded-full cursor-pointer" style={{ background: `linear-gradient(to right, ${t.glowA} 0%, ${t.glowA} ${(playlistCurrentTime / (playlistDuration || 1)) * 100}%, ${t.input} ${(playlistCurrentTime / (playlistDuration || 1)) * 100}%, ${t.input} 100%)` }} />
-                      <div className="flex justify-between text-[10px] mt-1" style={{ color: t.muted }}>
-                        <span>{Math.floor(playlistCurrentTime / 60)}:{String(Math.floor(playlistCurrentTime % 60)).padStart(2, '0')}</span>
-                        <span>{Math.floor((playlistDuration || 0) / 60)}:{String(Math.floor((playlistDuration || 0) % 60)).padStart(2, '0')}</span>
+                <div style={{padding:"0 14px 14px",animation:"reveal 200ms ease both"}}>
+                  <div style={{height:1,background:t.border,marginBottom:10}}/>
+                  {/* Tracks */}
+                  {pSongs.length===0 && <p style={{fontSize:12,color:t.muted,textAlign:"center",padding:"12px 0"}}>No tracks yet — add some below</p>}
+                  {pSongs.map((song,idx)=>(
+                    <div key={song.id} onClick={()=>playPlaylistSong(playlist.id,idx)}
+                      style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:12,cursor:"pointer",
+                        background: isActive&&playlistQueueIndex===idx ? `${t.glowA}18` : "transparent",
+                        marginBottom:2}}>
+                      <div style={{width:32,height:32,borderRadius:10,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
+                        background: isActive&&playlistQueueIndex===idx ? `linear-gradient(135deg,${t.glowA},${t.glowB})` : t.input,
+                        color: isActive&&playlistQueueIndex===idx ? "#fff" : t.muted}}>
+                        {isActive&&playlistQueueIndex===idx
+                          ? <Pause className="h-3 w-3 fill-current"/>
+                          : <span style={{fontSize:11,fontWeight:700,color:"inherit"}}>{idx+1}</span>}
                       </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2 justify-center mb-4">
-                    <button onClick={() => { if (playlistQueueIndex > 0) setPlaylistQueueIndex(playlistQueueIndex - 1); }} disabled={playlistQueueIndex === 0} className="flex h-9 w-9 items-center justify-center rounded-full transition text-xs font-semibold" style={{ background: playlistQueueIndex === 0 ? t.input : t.active, color: t.text, opacity: playlistQueueIndex === 0 ? 0.5 : 1 }}>⏮</button>
-                    <button onClick={() => { if (playlistAudioRef.current) playlistAudioRef.current.currentTime = Math.max(0, playlistCurrentTime - 10); }} className="flex h-9 w-9 items-center justify-center rounded-full transition text-sm font-semibold" style={{ background: t.active, color: t.text }}>-10</button>
-                    <button onClick={() => { if (isPlaying) { playlistAudioRef.current?.pause(); setPlayingPlaylistId(null); } else { setPlayingPlaylistId(playlist.id); } }} className="flex h-11 w-11 items-center justify-center rounded-full" style={{ background: `linear-gradient(135deg, ${t.glowA}, ${t.glowB})`, color: "#fff" }}>
-                      {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current ml-0.5" />}
-                    </button>
-                    <button onClick={() => { if (playlistAudioRef.current) playlistAudioRef.current.currentTime = Math.min(playlistDuration, playlistCurrentTime + 10); }} className="flex h-9 w-9 items-center justify-center rounded-full transition text-sm font-semibold" style={{ background: t.active, color: t.text }}>+10</button>
-                    <button onClick={() => { if (playlistQueueIndex < playlistSongs.length - 1) setPlaylistQueueIndex(playlistQueueIndex + 1); }} disabled={playlistQueueIndex === playlistSongs.length - 1} className="flex h-9 w-9 items-center justify-center rounded-full transition text-xs font-semibold" style={{ background: playlistQueueIndex === playlistSongs.length - 1 ? t.input : t.active, color: t.text, opacity: playlistQueueIndex === playlistSongs.length - 1 ? 0.5 : 1 }}>⏭</button>
-                  </div>
-
-                  {/* Queue */}
-                  <div className="space-y-1 mb-4">
-                    <p className="text-[10px] font-semibold mb-2" style={{ color: t.muted }}>Queue</p>
-                    {playlistSongs.map((song, idx) => (
-                      <div key={song.id} className="flex items-center gap-3 rounded-xl p-2 cursor-pointer transition" style={{ background: isPlaying && idx === playlistQueueIndex ? t.active : t.input }} onClick={() => { setPlayingPlaylistId(playlist.id); setPlaylistQueueIndex(idx); }}>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg flex-shrink-0" style={{ background: t.panel2, color: isPlaying && idx === playlistQueueIndex ? t.glowA : t.muted }}>{isPlaying && idx === playlistQueueIndex ? <Play className="h-3 w-3 fill-current ml-0.5" /> : <Upload className="h-3 w-3" />}</div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-semibold truncate" style={{ color: t.text }}>{song.title}</p>
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); addSongToPlaylist(playlist.id, song.id); }} className="flex h-8 w-8 items-center justify-center rounded-full flex-shrink-0 active:opacity-60 transition" style={{ color: t.muted }}><X className="h-3.5 w-3.5" /></button>
+                      <div style={{flex:1,minWidth:0}}>
+                        <p style={{fontSize:13,fontWeight:600,color: isActive&&playlistQueueIndex===idx ? t.glowA : t.text,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</p>
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Add Songs */}
-                  {songs.some(s => !playlist.songIds.includes(s.id)) && (
-                    <div>
-                      <p className="text-[10px] font-semibold mb-2" style={{ color: t.muted }}>Add songs</p>
-                      <div className="space-y-1">
-                        {songs.map((song) => (
-                          !playlist.songIds.includes(song.id) && (
-                            <button key={song.id} onClick={() => addSongToPlaylist(playlist.id, song.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:opacity-75 transition" style={{ background: t.input }}>
-                              <Plus className="h-3 w-3 shrink-0" style={{ color: t.muted }} />
-                              <span className="text-xs truncate" style={{ color: t.text }}>{song.title}</span>
-                            </button>
-                          )
-                        ))}
-                      </div>
+                      <button onClick={e=>{e.stopPropagation();addSongToPlaylist(playlist.id,song.id);}}
+                        style={{width:24,height:24,borderRadius:"50%",background:"transparent",border:"none",cursor:"pointer",color:t.muted,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        <X className="h-3.5 w-3.5"/>
+                      </button>
                     </div>
+                  ))}
+                  {/* Add songs */}
+                  {songs.some(s=>!playlist.songIds.includes(s.id)) && (
+                    <>
+                      <p style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,margin:"12px 0 6px 4px"}}>Add tracks</p>
+                      {songs.filter(s=>!playlist.songIds.includes(s.id)).map(song=>(
+                        <button key={song.id} onClick={()=>addSongToPlaylist(playlist.id,song.id)}
+                          style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"transparent",border:`1px dashed ${t.border}`,borderRadius:10,cursor:"pointer",marginBottom:4,textAlign:"left"}}>
+                          <Plus className="h-3.5 w-3.5" style={{color:t.muted,flexShrink:0}}/>
+                          <span style={{fontSize:12,fontWeight:500,color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</span>
+                        </button>
+                      ))}
+                    </>
                   )}
                 </div>
               )}
-            </section>
+            </div>
           );
         })}
       </div>
 
-      {playlists.length === 0 && <div className="rounded-3xl py-10 text-center text-sm backdrop-blur-xl" style={{ background: t.panel, color: t.muted }}>Create your first playlist to organize audio.</div>}
+      {/* ── CREATE PLAYLIST ── */}
+      <div style={{display:"flex",gap:8,padding:"4px 0"}}>
+        <input value={newPlaylistName} onChange={e=>setNewPlaylistName(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")createPlaylist();}}
+          placeholder="New playlist name…"
+          style={{flex:1,background:t.input,border:`1px solid ${t.border}`,borderRadius:14,padding:"12px 16px",fontSize:14,color:t.text,outline:"none"}}/>
+        <button onClick={createPlaylist}
+          style={{width:48,height:48,borderRadius:14,border:"none",cursor:"pointer",background:primaryBg,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Plus className="h-5 w-5"/>
+        </button>
+      </div>
+
+      {playlists.length===0 && (
+        <div style={{textAlign:"center",padding:"24px 0",color:t.muted,fontSize:13}}>Create a playlist to organise your audio</div>
+      )}
     </div>
   );
 
