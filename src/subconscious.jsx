@@ -2496,10 +2496,12 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
             </button>
           </div>
         )}
-        {/* Tap-to-select overlay when not editing */}
+        {/* Tap-to-select / drag overlay when not editing */}
         {!editing && (
-          <div onPointerDown={e=>e.stopPropagation()} onDoubleClick={enterEdit}
-            style={{position:"absolute",inset:0,cursor:isSelect?"default":"text",zIndex:5,borderRadius:4}} />
+          <div
+            onPointerDown={e=>{ e.stopPropagation(); if(isSelect) onDragStart(e); }}
+            onDoubleClick={enterEdit}
+            style={{position:"absolute",inset:0,cursor:isSelect?"grab":"text",zIndex:5,borderRadius:4,touchAction:"none"}} />
         )}
         <textarea
           ref={textareaRef}
@@ -2718,7 +2720,17 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const [drawWidth, setDrawWidth] = useState(3);
   const [bgMode, setBgMode] = useState(() => loadFromStorage("board_bg_" + session.id, "light"));
   const boardDark = bgMode === "dark";
-  useEffect(() => { saveToStorage("board_bg_" + session.id, bgMode); }, [bgMode]);
+  useEffect(() => {
+    saveToStorage("board_bg_" + session.id, bgMode);
+    // Flip text node colors when background switches dark ↔ light
+    setNodes(ns => ns.map(nd => {
+      if (nd.type !== "text") return nd;
+      const dark = bgMode === "dark";
+      const wasDefault = nd.color === (dark ? "#111111" : "#ffffff");
+      if (wasDefault) return { ...nd, color: dark ? "#ffffff" : "#111111" };
+      return nd;
+    }));
+  }, [bgMode]);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [currentDraw, setCurrentDraw] = useState(null);
   const [lineStart, setLineStart] = useState(null);
@@ -3340,6 +3352,12 @@ function QuickMediaVault() {
       so.lock("portrait").catch(() => {});
     }
   }, [boardSession]);
+
+  // Update document title when page changes
+  useEffect(() => {
+    const titles = { vault: "Flare", creative: "Sandbox", folders: "Vault", playlists: "Playlist", profile: "Profile" };
+    document.title = boardSession ? boardSession.name : (titles[page] || "Flare");
+  }, [page, boardSession]);
 
   // Load data from IndexedDB on mount
   useEffect(() => {
