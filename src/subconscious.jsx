@@ -1572,6 +1572,7 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
     const [editing, setEditing] = useState(node.text === "");
     useEffect(() => { if (!selected) setEditing(false); }, [selected]);
     const textareaRef = useRef(null);
+    useEffect(() => { if (node.text === "") setTimeout(() => textareaRef.current?.focus(), 50); }, []);
     const fontSizes = [12,16,20,28,36,48];
     const fmBg = "rgba(250,250,248,.97)";
     const fmBorder = "rgba(0,0,0,.1)";
@@ -1935,6 +1936,14 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
 
   const addNote = () => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"note",x:c.x-100,y:c.y-65,w:200,text:"",color:"#FFF176"}]); setShowVaultPicker(false); setTool("select"); toolRef.current="select"; };
   const addText = (x,y) => setNodes(n=>[...n,{id:Date.now(),type:"text",x,y,text:"",fontSize:16,color:boardDark?"#ffffff":"#111111",bold:false,italic:false,w:200}]);
+  const addTextCenter = () => {
+    const c = center();
+    const id = Date.now();
+    setNodes(n=>[...n,{id,type:"text",x:c.x-100,y:c.y-20,text:"",fontSize:20,color:boardDark?"#ffffff":"#111111",bold:false,italic:false,w:200}]);
+    setSelectedId(id);
+    setTool("select"); toolRef.current="select";
+    setShowVaultPicker(false); setShowColorPicker(false);
+  };
   const addVault = (item) => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"vault",x:c.x-120,y:c.y-70,w:240,item}]); setShowVaultPicker(false); setTool("select"); toolRef.current="select"; };
   const addMediaFile = async (file) => {
     if (!file) return;
@@ -2354,7 +2363,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
                   <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
                 </button>
                 {/* Text */}
-                <button onClick={()=>{setTool("text");toolRef.current="text";setShowColorPicker(false);setShowVaultPicker(false);}}
+                <button onClick={addTextCenter}
                   style={{width:48,height:48,background:tbGroupBg,border:"none",borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText,fontSize:18,fontWeight:800,fontFamily:"Georgia,serif",letterSpacing:"-0.02em",lineHeight:1}}>
                   Aa
                 </button>
