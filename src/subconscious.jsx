@@ -2647,62 +2647,89 @@ function CreativeSessions({ t, theme, sessions, onOpen, onCreate, onDelete, onRe
   };
 
   return (
-    <div className="space-y-2 pt-1">
-      {sessions.map(s => (
-        <div key={s.id}>
-          <div onClick={() => onOpen(s)}
-            style={{display:"flex",alignItems:"center",gap:10,background:t.panel,border:`1px solid ${t.border}`,borderRadius:14,padding:"10px 12px",boxShadow:t.shadow,cursor:"pointer"}}>
-            {/* Cover — tap to choose icon/photo */}
-            <button onClick={e=>{e.stopPropagation();setIconPickerId(iconPickerId===s.id?null:s.id);}}
-              style={{width:42,height:42,borderRadius:11,background:isDark?"rgba(255,255,255,.06)":"rgba(0,0,0,.05)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:"pointer",border:`1px solid ${t.border}`,overflow:"hidden",padding:0}}>
-              {s.cover
-                ? <img src={s.cover} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                : <span style={{fontSize:20}}>{s.icon || "✦"}</span>}
-            </button>
-            {/* Name / rename */}
-            <div style={{flex:1,minWidth:0}}>
-              {renamingId === s.id ? (
-                <input value={renameVal} onChange={e=>setRenameVal(e.target.value)}
-                  onBlur={()=>commitRename(s.id)}
-                  onKeyDown={e=>{if(e.key==="Enter")commitRename(s.id);if(e.key==="Escape")setRenamingId(null);}}
-                  autoFocus onClick={e=>e.stopPropagation()}
-                  style={{width:"100%",background:"transparent",border:"none",outline:`1px solid ${t.border}`,borderRadius:6,fontSize:13,fontWeight:700,color:t.text,padding:"1px 4px"}} />
-              ) : (
-                <p style={{fontSize:13,fontWeight:700,color:t.text,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
-              )}
-              <p style={{fontSize:10,color:t.muted,margin:"1px 0 0"}}>{s.nodes.length} item{s.nodes.length===1?"":"s"} · {new Date(s.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</p>
-            </div>
-            {/* Actions */}
-            <button onClick={e=>startRename(s,e)} style={{width:30,height:30,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <Pencil style={{width:14,height:14,color:t.muted}} />
-            </button>
-            <button onClick={e=>{e.stopPropagation();onDelete(s.id);}} style={{width:30,height:30,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",fontSize:17,color:"rgba(255,100,100,.7)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>×</button>
-          </div>
-          {/* Icon / cover picker */}
-          {iconPickerId === s.id && (
-            <div style={{marginTop:6,background:t.panel,border:`1px solid ${t.border}`,borderRadius:14,padding:12,boxShadow:t.shadow}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:6,marginBottom:10}}>
-                {BOARD_ICONS.map(ic=>(
-                  <button key={ic} onClick={()=>{onSetCover(s.id,{icon:ic,cover:null});setIconPickerId(null);}}
-                    style={{aspectRatio:"1",borderRadius:9,border:`1px solid ${(s.icon===ic&&!s.cover)?t.accent:t.border}`,background:(s.icon===ic&&!s.cover)?t.input:"transparent",cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>{ic}</button>
-                ))}
+    <div style={{paddingTop:4}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        {sessions.map(s => (
+          <div key={s.id}>
+            <div onClick={()=>{ if(renamingId!==s.id) onOpen(s); }}
+              style={{borderRadius:20,overflow:"hidden",background:t.panel,border:`1px solid ${t.border}`,
+                boxShadow:t.shadow,cursor:"pointer",display:"flex",flexDirection:"column",aspectRatio:"1"}}>
+              {/* Cover */}
+              <div style={{flex:1,position:"relative",background:s.cover?"transparent":isDark?"rgba(255,255,255,.04)":"rgba(0,0,0,.04)",
+                display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                {s.cover
+                  ? <img src={s.cover} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+                  : <span style={{fontSize:32,pointerEvents:"none"}}>{s.icon||"✦"}</span>}
+                {/* Action buttons */}
+                <div style={{position:"absolute",top:6,right:6,display:"flex",gap:4}} onClick={e=>e.stopPropagation()}>
+                  <button onClick={e=>startRename(s,e)}
+                    style={{width:26,height:26,borderRadius:8,border:"none",cursor:"pointer",
+                      background:"rgba(0,0,0,.45)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",
+                      display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}>
+                    <Pencil style={{width:12,height:12}}/>
+                  </button>
+                  <button onClick={e=>{e.stopPropagation();onDelete(s.id);}}
+                    style={{width:26,height:26,borderRadius:8,border:"none",cursor:"pointer",
+                      background:"rgba(0,0,0,.45)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",
+                      display:"flex",alignItems:"center",justifyContent:"center",color:"#FF6B6B"}}>
+                    <X style={{width:12,height:12}}/>
+                  </button>
+                </div>
+                {/* Cover/icon picker trigger */}
+                <button onClick={e=>{e.stopPropagation();setIconPickerId(iconPickerId===s.id?null:s.id);}}
+                  style={{position:"absolute",bottom:6,left:6,width:26,height:26,borderRadius:8,border:"none",cursor:"pointer",
+                    background:"rgba(0,0,0,.45)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",
+                    display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}>
+                  <Image style={{width:12,height:12}}/>
+                </button>
               </div>
-              <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,width:"100%",padding:"9px 0",borderRadius:10,border:`1.5px dashed ${t.border}`,cursor:"pointer",fontSize:12,fontWeight:600,color:t.muted}}>
-                <Image style={{width:15,height:15}} /> Upload cover photo
-                <input type="file" accept="image/*" className="hidden"
-                  onChange={e=>{const f=e.target.files?.[0];if(f)pickCoverPhoto(s.id,f);e.target.value="";}} />
-              </label>
+              {/* Info */}
+              <div style={{padding:"8px 10px 10px",background:t.panel}}>
+                {renamingId===s.id ? (
+                  <input value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+                    onBlur={()=>commitRename(s.id)}
+                    onKeyDown={e=>{if(e.key==="Enter")commitRename(s.id);if(e.key==="Escape")setRenamingId(null);}}
+                    autoFocus onClick={e=>e.stopPropagation()}
+                    style={{width:"100%",background:"transparent",border:"none",outline:`1px solid ${t.border}`,
+                      borderRadius:6,fontSize:12,fontWeight:700,color:t.text,padding:"1px 4px"}}/>
+                ) : (
+                  <p style={{fontSize:12,fontWeight:700,color:t.text,margin:"0 0 1px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
+                )}
+                <p style={{fontSize:10,color:t.muted,margin:0}}>{s.nodes.length} item{s.nodes.length===1?"":"s"}</p>
+              </div>
             </div>
-          )}
-        </div>
-      ))}
-      <button onClick={onCreate}
-        style={{width:"100%",background:"transparent",border:`1.5px dashed ${t.border}`,borderRadius:14,padding:"10px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,background:t.input,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <Plus className="h-4 w-4" style={{color:t.muted}} />
-        </div>
-        <p style={{fontSize:13,fontWeight:600,color:t.muted,margin:0}}>New Board</p>
-      </button>
+            {/* Icon/cover picker */}
+            {iconPickerId===s.id && (
+              <div style={{marginTop:6,background:t.panel,border:`1px solid ${t.border}`,borderRadius:14,padding:12,boxShadow:t.shadow}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:6,marginBottom:10}}>
+                  {BOARD_ICONS.map(ic=>(
+                    <button key={ic} onClick={()=>{onSetCover(s.id,{icon:ic,cover:null});setIconPickerId(null);}}
+                      style={{aspectRatio:"1",borderRadius:9,border:`1px solid ${(s.icon===ic&&!s.cover)?t.accent:t.border}`,
+                        background:(s.icon===ic&&!s.cover)?t.input:"transparent",cursor:"pointer",fontSize:18,
+                        display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>{ic}</button>
+                  ))}
+                </div>
+                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,width:"100%",padding:"9px 0",
+                  borderRadius:10,border:`1.5px dashed ${t.border}`,cursor:"pointer",fontSize:12,fontWeight:600,color:t.muted}}>
+                  <Image style={{width:15,height:15}}/> Upload cover photo
+                  <input type="file" accept="image/*" className="hidden"
+                    onChange={e=>{const f=e.target.files?.[0];if(f)pickCoverPhoto(s.id,f);e.target.value="";}}/>
+                </label>
+              </div>
+            )}
+          </div>
+        ))}
+        {/* New board button */}
+        <button onClick={onCreate}
+          style={{borderRadius:20,border:`1.5px dashed ${t.border}`,background:"transparent",
+            aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+            gap:10,cursor:"pointer"}}>
+          <div style={{width:40,height:40,borderRadius:13,background:t.input,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <Plus style={{width:20,height:20,color:t.muted}}/>
+          </div>
+          <p style={{fontSize:12,fontWeight:600,color:t.muted,margin:0}}>New Board</p>
+        </button>
+      </div>
     </div>
   );
 }
@@ -3338,6 +3365,10 @@ function QuickMediaVault() {
   const playlistAudioRef = useRef(null);
   const playlistLoadingRef = useRef(false); // true while switching tracks — blocks onPause from clearing state
   const saveTimerRef = useRef(null);         // debounce handle for items → IDB writes
+  const audioCtxRef = useRef(null);
+  const analyserRef = useRef(null);
+  const bassRafRef = useRef(null);
+  const [bassLevel, setBassLevel] = useState(0);
 
 
   // Orientation lock: portrait everywhere except inside a board
@@ -3850,28 +3881,61 @@ function QuickMediaVault() {
     playlistAudioRef.current.src = url;
     playlistAudioRef.current.load();
     playlistAudioRef.current.play().catch(() => {});
+    // Web Audio bass detection
+    try {
+      if (!audioCtxRef.current) {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.82;
+        const source = ctx.createMediaElementSource(playlistAudioRef.current);
+        source.connect(analyser);
+        analyser.connect(ctx.destination);
+        audioCtxRef.current = ctx;
+        analyserRef.current = analyser;
+      }
+      if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+      cancelAnimationFrame(bassRafRef.current);
+      const freq = new Uint8Array(analyserRef.current.frequencyBinCount);
+      const tick = () => {
+        analyserRef.current.getByteFrequencyData(freq);
+        const bass = freq.slice(1, 9).reduce((a, b) => a + b, 0) / (8 * 255);
+        setBassLevel(bass);
+        bassRafRef.current = requestAnimationFrame(tick);
+      };
+      bassRafRef.current = requestAnimationFrame(tick);
+    } catch(_) {}
+    // Media Session API
+    try {
+      const msSong = items.filter(s => playlists.find(p=>p.id===pId)?.songIds.includes(s.id))[idx];
+      if (navigator.mediaSession && msSong) {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: msSong.title, artist: 'Flare' });
+        navigator.mediaSession.setActionHandler('pause', () => stopPlaylist());
+        navigator.mediaSession.setActionHandler('play', () => playlistAudioRef.current?.play());
+        navigator.mediaSession.setActionHandler('previoustrack', () => { if(idx > 0) playPlaylistSong(pId, idx-1); });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          const pl = playlists.find(p=>p.id===pId);
+          const songs = items.filter(s=>pl?.songIds.includes(s.id));
+          if(idx < songs.length-1) playPlaylistSong(pId, idx+1);
+        });
+      }
+    } catch(_) {}
     playlistLoadingRef.current = false;
     setPlayingPlaylistId(pId);
     setPlaylistQueueIndex(idx);
     setExpandedPlaylistId(pId);
   };
-  const stopPlaylist = () => { playlistAudioRef.current?.pause(); setPlayingPlaylistId(null); };
+  const stopPlaylist = () => {
+    playlistAudioRef.current?.pause();
+    setPlayingPlaylistId(null);
+    cancelAnimationFrame(bassRafRef.current);
+    setBassLevel(0);
+  };
   const pct = playlistDuration > 0 ? (playlistCurrentTime / playlistDuration) * 100 : 0;
   const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 
   const playlistPage = (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <audio ref={playlistAudioRef} style={{display:"none"}}
-        onPause={()=>{ if(playingPlaylistId && !playlistLoadingRef.current) setPlayingPlaylistId(null); }}
-        onTimeUpdate={()=>{ if(playlistAudioRef.current) setPlaylistCurrentTime(playlistAudioRef.current.currentTime); }}
-        onLoadedMetadata={()=>{ if(playlistAudioRef.current) setPlaylistDuration(playlistAudioRef.current.duration); }}
-        onEnded={()=>{
-          const playlist = playlists.find(p=>p.id===playingPlaylistId);
-          const pSongs = playlist ? items.filter(s=>playlist.songIds.includes(s.id)) : [];
-          if(playlistQueueIndex < pSongs.length-1) playPlaylistSong(playingPlaylistId, playlistQueueIndex+1);
-          else setPlayingPlaylistId(null);
-        }}
-      />
 
       {/* ── NOW PLAYING CARD ── */}
       {playingPlaylistId && (() => {
@@ -3924,111 +3988,110 @@ function QuickMediaVault() {
         );
       })()}
 
-      {/* ── PLAYLISTS ── */}
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {/* ── PLAYLISTS GRID ── */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         {playlists.map(playlist => {
           const pSongs = items.filter(s => playlist.songIds.includes(s.id));
           const isActive = playingPlaylistId === playlist.id;
           const isExpanded = expandedPlaylistId === playlist.id;
           return (
-            <div key={playlist.id} style={{borderRadius:20,background:t.panel,border:`1px solid ${isActive?t.glowA:t.border}`,boxShadow:t.shadow,overflow:"hidden",transition:"border-color .2s"}}>
-              {/* Row header */}
-              <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",cursor:"pointer"}}
-                onClick={()=>setExpandedPlaylistId(isExpanded?null:playlist.id)}>
-                {/* Cover art + play button */}
-                <div style={{position:"relative",width:44,height:44,flexShrink:0,borderRadius:12,overflow:"hidden"}}>
-                  {playlist.cover && <img src={playlist.cover} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} />}
-                  <button
-                    onClick={e=>{e.stopPropagation(); isActive ? stopPlaylist() : playPlaylistSong(playlist.id,0);}}
-                    style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-                      background: playlist.cover ? "rgba(0,0,0,.38)" : isActive ? `linear-gradient(135deg,${t.glowA},${t.glowB})` : t.input,
-                      color: playlist.cover || isActive ? "#fff" : t.muted,
-                      boxShadow: isActive ? `0 2px 12px ${t.glowA}44` : "none",
-                    }}>
-                    {isActive ? <Pause className="h-4 w-4 fill-current"/> : <Play className="h-4 w-4 fill-current ml-0.5"/>}
-                  </button>
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <p style={{fontSize:14,fontWeight:700,color:t.text,margin:"0 0 2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{playlist.name}</p>
-                  <p style={{fontSize:11,color:t.muted,margin:0}}>{pSongs.length} track{pSongs.length!==1?"s":""}</p>
-                </div>
-                <ChevronDown className="h-4 w-4" style={{color:t.muted,flexShrink:0,transition:"transform .2s",transform:isExpanded?"rotate(180deg)":"rotate(0)"}}/>
+            <div key={playlist.id} onClick={()=>setExpandedPlaylistId(isExpanded?null:playlist.id)}
+              style={{borderRadius:20,overflow:"hidden",background:t.panel,
+                border:`1.5px solid ${isActive?t.glowA:isExpanded?t.accent+"66":t.border}`,
+                boxShadow:isActive?`0 0 24px ${t.glowA}44`:t.shadow,cursor:"pointer",
+                display:"flex",flexDirection:"column",
+                transition:"border-color .2s,box-shadow .2s"}}>
+              {/* Cover */}
+              <div style={{position:"relative",aspectRatio:"1",background:isActive?`linear-gradient(135deg,${t.glowA},${t.glowB})`:t.input,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                {playlist.cover && <img src={playlist.cover} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>}
+                {!playlist.cover && <Music style={{width:28,height:28,color:isActive?"rgba(255,255,255,.6)":t.muted}}/>}
+                {/* Play */}
+                <button onClick={e=>{e.stopPropagation();isActive?stopPlaylist():playPlaylistSong(playlist.id,0);}}
+                  style={{position:"absolute",bottom:8,right:8,width:34,height:34,borderRadius:"50%",border:"none",cursor:"pointer",
+                    background:playlist.cover?"rgba(0,0,0,.55)":isActive?"rgba(255,255,255,.22)":"rgba(0,0,0,.22)",
+                    color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                    backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)"}}>
+                  {isActive?<Pause className="h-3.5 w-3.5 fill-current"/>:<Play className="h-3.5 w-3.5 fill-current ml-0.5"/>}
+                </button>
+                {/* Delete */}
                 <button onClick={e=>{e.stopPropagation();deletePlaylist(playlist.id);}}
-                  style={{width:30,height:30,borderRadius:"50%",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:t.muted,flexShrink:0}}>
-                  <X className="h-4 w-4"/>
+                  style={{position:"absolute",top:6,right:6,width:26,height:26,borderRadius:"50%",border:"none",cursor:"pointer",
+                    background:"rgba(0,0,0,.45)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                    backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)"}}>
+                  <X style={{width:12,height:12}}/>
                 </button>
               </div>
-
-              {/* Expanded: track list + add songs */}
-              {isExpanded && (() => {
-                const plCoverRef = React.createRef();
-                return (
-                <div style={{padding:"0 14px 14px",animation:"contextIn 220ms var(--spring-snappy) both"}}>
-                  <div style={{height:1,background:t.border,marginBottom:10}}/>
-                  {/* Cover art picker */}
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-                    <label style={{position:"relative",width:48,height:48,borderRadius:12,overflow:"hidden",flexShrink:0,cursor:"pointer",background:playlist.cover?"transparent":`${t.glowA}18`,border:`1px dashed ${t.border}`}}>
-                      {playlist.cover && <img src={playlist.cover} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>}
-                      <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:playlist.cover?"rgba(0,0,0,.35)":"transparent"}}>
-                        <Camera style={{width:18,height:18,color:playlist.cover?"#fff":t.muted}}/>
-                      </div>
-                      <input type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
-                        const f=e.target.files?.[0]; if(!f)return;
-                        const c=await compressCoverArt(f);
-                        if(c) setPlaylists(prev=>prev.map(p=>p.id===playlist.id?{...p,cover:c}:p));
-                        e.target.value="";
-                      }}/>
-                    </label>
-                    <div>
-                      <p style={{fontSize:12,fontWeight:600,color:t.text,margin:"0 0 2px"}}>{playlist.cover?"Change cover":"Add cover"}</p>
-                      {playlist.cover && <button onClick={()=>setPlaylists(prev=>prev.map(p=>p.id===playlist.id?{...p,cover:null}:p))} style={{fontSize:11,color:t.muted,background:"none",border:"none",cursor:"pointer",padding:0}}>Remove</button>}
-                    </div>
-                  </div>
-                  {/* Tracks */}
-                  {pSongs.length===0 && (
-                    <p className="type-secondary" style={{color:t.muted,textAlign:"center",padding:"10px 0"}}>No tracks yet — add some below</p>
-                  )}
-                  {pSongs.map((song,idx)=>(
-                    <div key={song.id} onClick={()=>playPlaylistSong(playlist.id,idx)}
-                      style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:12,cursor:"pointer",
-                        background: isActive&&playlistQueueIndex===idx ? `${t.glowA}18` : "transparent",
-                        marginBottom:2}}>
-                      <div style={{width:32,height:32,borderRadius:10,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
-                        background: isActive&&playlistQueueIndex===idx ? `linear-gradient(135deg,${t.glowA},${t.glowB})` : t.input,
-                        color: isActive&&playlistQueueIndex===idx ? "#fff" : t.muted}}>
-                        {isActive&&playlistQueueIndex===idx
-                          ? <Pause className="h-3 w-3 fill-current"/>
-                          : <span style={{fontSize:11,fontWeight:700,color:"inherit"}}>{idx+1}</span>}
-                      </div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <p style={{fontSize:13,fontWeight:600,color: isActive&&playlistQueueIndex===idx ? t.glowA : t.text,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</p>
-                      </div>
-                      <button onClick={e=>{e.stopPropagation();addSongToPlaylist(playlist.id,song.id);}}
-                        style={{width:24,height:24,borderRadius:"50%",background:"transparent",border:"none",cursor:"pointer",color:t.muted,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                        <X className="h-3.5 w-3.5"/>
-                      </button>
-                    </div>
-                  ))}
-                  {/* Add songs */}
-                  {songs.some(s=>!playlist.songIds.includes(s.id)) && (
-                    <>
-                      <p style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,margin:"12px 0 6px 4px"}}>Add tracks</p>
-                      {songs.filter(s=>!playlist.songIds.includes(s.id)).map(song=>(
-                        <button key={song.id} onClick={()=>addSongToPlaylist(playlist.id,song.id)}
-                          style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"transparent",border:`1px dashed ${t.border}`,borderRadius:10,cursor:"pointer",marginBottom:4,textAlign:"left"}}>
-                          <Plus className="h-3.5 w-3.5" style={{color:t.muted,flexShrink:0}}/>
-                          <span style={{fontSize:12,fontWeight:500,color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</span>
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </div>
-                );
-              })()}
+              {/* Info */}
+              <div style={{padding:"9px 11px 10px"}}>
+                <p style={{fontSize:13,fontWeight:700,color:isActive?t.glowA:t.text,margin:"0 0 2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{playlist.name}</p>
+                <p style={{fontSize:10,color:t.muted,margin:0}}>{pSongs.length} track{pSongs.length!==1?"s":""}</p>
+              </div>
             </div>
           );
         })}
       </div>
+
+      {/* Expanded playlist detail */}
+      {expandedPlaylistId && (() => {
+        const playlist = playlists.find(p=>p.id===expandedPlaylistId);
+        if(!playlist) return null;
+        const pSongs = items.filter(s=>playlist.songIds.includes(s.id));
+        const isActive = playingPlaylistId === playlist.id;
+        return (
+          <div style={{borderRadius:20,background:t.panel,border:`1px solid ${t.border}`,padding:"14px",animation:"contextIn 220ms var(--spring-snappy) both"}}>
+            <p style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,margin:"0 0 10px"}}>{playlist.name}</p>
+            {/* Cover art picker */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+              <label style={{position:"relative",width:44,height:44,borderRadius:12,overflow:"hidden",flexShrink:0,cursor:"pointer",background:playlist.cover?"transparent":`${t.glowA}18`,border:`1px dashed ${t.border}`}}>
+                {playlist.cover && <img src={playlist.cover} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>}
+                <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:playlist.cover?"rgba(0,0,0,.35)":"transparent"}}>
+                  <Camera style={{width:16,height:16,color:playlist.cover?"#fff":t.muted}}/>
+                </div>
+                <input type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
+                  const f=e.target.files?.[0]; if(!f)return;
+                  const c=await compressCoverArt(f);
+                  if(c) setPlaylists(prev=>prev.map(p=>p.id===playlist.id?{...p,cover:c}:p));
+                  e.target.value="";
+                }}/>
+              </label>
+              <div>
+                <p style={{fontSize:12,fontWeight:600,color:t.text,margin:"0 0 2px"}}>{playlist.cover?"Change cover":"Add cover"}</p>
+                {playlist.cover && <button onClick={()=>setPlaylists(prev=>prev.map(p=>p.id===playlist.id?{...p,cover:null}:p))} style={{fontSize:11,color:t.muted,background:"none",border:"none",cursor:"pointer",padding:0}}>Remove</button>}
+              </div>
+            </div>
+            {/* Tracks */}
+            {pSongs.length===0 && <p style={{color:t.muted,textAlign:"center",padding:"10px 0",fontSize:12}}>No tracks yet — add some below</p>}
+            {pSongs.map((song,idx)=>(
+              <div key={song.id} onClick={()=>playPlaylistSong(playlist.id,idx)}
+                style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:12,cursor:"pointer",
+                  background:isActive&&playlistQueueIndex===idx?`${t.glowA}18`:"transparent",marginBottom:2}}>
+                <div style={{width:30,height:30,borderRadius:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
+                  background:isActive&&playlistQueueIndex===idx?`linear-gradient(135deg,${t.glowA},${t.glowB})`:t.input,
+                  color:isActive&&playlistQueueIndex===idx?"#fff":t.muted}}>
+                  {isActive&&playlistQueueIndex===idx?<Pause className="h-3 w-3 fill-current"/>:<span style={{fontSize:10,fontWeight:700}}>{idx+1}</span>}
+                </div>
+                <p style={{flex:1,fontSize:13,fontWeight:600,color:isActive&&playlistQueueIndex===idx?t.glowA:t.text,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</p>
+                <button onClick={e=>{e.stopPropagation();addSongToPlaylist(playlist.id,song.id);}}
+                  style={{width:24,height:24,borderRadius:"50%",background:"transparent",border:"none",cursor:"pointer",color:t.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <X style={{width:14,height:14}}/>
+                </button>
+              </div>
+            ))}
+            {songs.some(s=>!playlist.songIds.includes(s.id)) && (
+              <>
+                <p style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,margin:"12px 0 6px 4px"}}>Add tracks</p>
+                {songs.filter(s=>!playlist.songIds.includes(s.id)).map(song=>(
+                  <button key={song.id} onClick={()=>addSongToPlaylist(playlist.id,song.id)}
+                    style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"transparent",border:`1px dashed ${t.border}`,borderRadius:10,cursor:"pointer",marginBottom:4,textAlign:"left"}}>
+                    <Plus style={{width:14,height:14,color:t.muted,flexShrink:0}}/>
+                    <span style={{fontSize:12,fontWeight:500,color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{song.title}</span>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── CREATE PLAYLIST ── */}
       <div style={{display:"flex",gap:8,padding:"4px 0"}}>
@@ -4060,6 +4123,17 @@ function QuickMediaVault() {
   return (
     <div className="theme-bg min-h-screen px-4" style={{ background: t.page, color: t.text, paddingTop: 0, paddingBottom: "calc(7rem + env(safe-area-inset-bottom))" }}>
       <Styles />
+      <audio ref={playlistAudioRef} style={{display:"none"}}
+        onPause={()=>{ if(playingPlaylistId && !playlistLoadingRef.current) setPlayingPlaylistId(null); }}
+        onTimeUpdate={()=>{ if(playlistAudioRef.current) setPlaylistCurrentTime(playlistAudioRef.current.currentTime); }}
+        onLoadedMetadata={()=>{ if(playlistAudioRef.current) setPlaylistDuration(playlistAudioRef.current.duration); }}
+        onEnded={()=>{
+          const playlist = playlists.find(p=>p.id===playingPlaylistId);
+          const pSongs = playlist ? items.filter(s=>playlist.songIds.includes(s.id)) : [];
+          if(playlistQueueIndex < pSongs.length-1) playPlaylistSong(playingPlaylistId, playlistQueueIndex+1);
+          else setPlayingPlaylistId(null);
+        }}
+      />
       {/* Fixed background — prevents overscroll flash */}
       <div style={{ position: "fixed", inset: 0, background: t.page, zIndex: -1 }} />
       {/* Ambient glow orbs */}
@@ -4068,6 +4142,13 @@ function QuickMediaVault() {
         <div className="absolute -right-32 top-48 h-80 w-80 rounded-full blur-3xl" style={{ background: t.glowC, opacity: theme === "dark" ? 0.13 : 0.18 }} />
         <div className="absolute left-1/2 top-[60%] h-64 w-64 -translate-x-1/2 rounded-full blur-3xl" style={{ background: t.glowB, opacity: theme === "dark" ? 0.1 : 0.12 }} />
       </div>
+      {/* Bass-reactive glow — pulses with music */}
+      {playingPlaylistId && (
+        <div style={{
+          position:"fixed", inset:0, zIndex:0, pointerEvents:"none",
+          background:`radial-gradient(ellipse 90% 50% at 50% 105%, ${t.glowA}${Math.round(bassLevel*55).toString(16).padStart(2,"0")}, ${t.glowB}${Math.round(bassLevel*30).toString(16).padStart(2,"0")} 40%, transparent 70%)`,
+        }}/>
+      )}
 
       {/* ── Header ── */}
       <div style={{ paddingTop: "max(0px, env(safe-area-inset-top))" }}>
