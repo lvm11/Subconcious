@@ -4145,8 +4145,9 @@ function QuickMediaVault() {
       {/* Bass-reactive glow — pulses with music */}
       {playingPlaylistId && (
         <div style={{
-          position:"fixed", inset:0, zIndex:0, pointerEvents:"none",
-          background:`radial-gradient(ellipse 90% 50% at 50% 105%, ${t.glowA}${Math.round(bassLevel*55).toString(16).padStart(2,"0")}, ${t.glowB}${Math.round(bassLevel*30).toString(16).padStart(2,"0")} 40%, transparent 70%)`,
+          position:"fixed", inset:0, zIndex:9, pointerEvents:"none",
+          mixBlendMode: "screen",
+          background:`radial-gradient(ellipse 100% 65% at 50% 105%, ${t.glowA}${Math.round((bassLevel*0.75+0.08)*99).toString(16).padStart(2,"0")}, ${t.glowB}${Math.round((bassLevel*0.5+0.04)*99).toString(16).padStart(2,"0")} 45%, transparent 72%)`,
         }}/>
       )}
 
@@ -4156,7 +4157,14 @@ function QuickMediaVault() {
           <header style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "28px 0 20px" }}>
             <div style={{ minWidth: 0 }}>
               <FlareTitle t={t} />
-              <p className="type-label" style={{ color: t.muted, marginTop: 6, letterSpacing: "0.18em" }}>By Loveem, For You.</p>
+              <p className="type-label" style={{ color: t.muted, marginTop: 6, letterSpacing: "0.18em" }}>
+                {page === "vault"    ? "By Loveem, For You."
+                : page === "creative" ? "Sandbox"
+                : page === "folders"  ? "Vault"
+                : page === "playlists"? "Playlist"
+                : page === "profile"  ? "Profile"
+                : "By Loveem, For You."}
+              </p>
             </div>
             <button
               onClick={() => setSettingsOpen(true)}
