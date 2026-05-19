@@ -328,8 +328,9 @@ function normalizeUrl(value) {
 }
 function detectType(value) {
   const lower = String(value || "").toLowerCase();
-  if (lower.includes("spotify") || lower.includes("soundcloud") || lower.includes("music.apple") || /\.(mp3|wav|m4a|aac|flac|ogg)(\?.*)?$/i.test(lower)) return "song";
-  if (/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(lower) || lower.includes("unsplash") || lower.includes("image")) return "image";
+  // Only direct audio files get the player — streaming service links open in-app
+  if (/\.(mp3|wav|m4a|aac|flac|ogg|opus|webm)(\?.*)?$/i.test(lower)) return "song";
+  if (/\.(jpg|jpeg|png|gif|webp|avif)(\?.*)?$/i.test(lower) || lower.includes("unsplash") || lower.includes("image")) return "image";
   return "link";
 }
 function iconFor(type) {
@@ -1477,7 +1478,7 @@ function ColorPicker({ color, onChange, strokeWidth, onWidthChange, onClose, boa
   const muted = boardDark ? "rgba(255,255,255,.35)" : "rgba(0,0,0,.35)";
   const active = boardDark ? "rgba(255,255,255,.15)" : "rgba(0,0,0,.12)";
   return (
-    <div onPointerDown={e=>e.stopPropagation()} style={{position:"fixed",bottom:116,left:"50%",transform:"translateX(-50%)",background:bg,borderRadius:20,padding:16,zIndex:62,boxShadow:"0 8px 40px rgba(0,0,0,.45)",border:`1px solid ${border}`,minWidth:230}}>
+    <div onPointerDown={e=>e.stopPropagation()} style={{position:"fixed",bottom:"calc(148px + env(safe-area-inset-bottom))",left:"50%",transform:"translateX(-50%)",background:bg,borderRadius:20,padding:16,zIndex:62,boxShadow:"0 8px 40px rgba(0,0,0,.45)",border:`1px solid ${border}`,minWidth:230}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:muted}}>Color & Stroke</span>
         <button onClick={onClose} style={{fontSize:14,border:"none",background:"transparent",cursor:"pointer",color:muted,lineHeight:1,padding:4}}>✕</button>
@@ -1522,6 +1523,16 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
   };
   const onDown = (e) => { if(!isSelect) return; onDragStart(e); };
   const onClick = () => { if(isSelect) onSelect(); };
+  // Drag handle: touch/click this to drag. Bubbles to board container for pointer capture.
+  const dragHandle = isSelect ? (
+    <div onPointerDown={onDown}
+      style={{display:"flex",alignItems:"center",justifyContent:"center",height:22,cursor:"grab",flexShrink:0,touchAction:"none",userSelect:"none",opacity:0.45}}>
+      <svg width="20" height="8" viewBox="0 0 20 8" fill="currentColor" style={{color:"#888"}}>
+        <circle cx="4" cy="2" r="1.5"/><circle cx="10" cy="2" r="1.5"/><circle cx="16" cy="2" r="1.5"/>
+        <circle cx="4" cy="6" r="1.5"/><circle cx="10" cy="6" r="1.5"/><circle cx="16" cy="6" r="1.5"/>
+      </svg>
+    </div>
+  ) : <div style={{height:22}}/>;
   const delBtn = selected ? (
     <button onPointerDown={e=>e.stopPropagation()} onClick={onDelete}
       style={{position:"absolute",top:-11,right:-11,width:24,height:24,background:"#FF6B6B",color:"#fff",border:"none",borderRadius:"50%",cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",zIndex:10,boxShadow:"0 2px 8px rgba(0,0,0,.3)"}}>×</button>
@@ -1535,9 +1546,9 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
     const fmText = boardDark ? "#fff" : "#111";
     const fmMuted = boardDark ? "rgba(255,255,255,.38)" : "rgba(0,0,0,.35)";
     return (
-      <div style={{position:"absolute",left:node.x,top:node.y,cursor:isSelect?"grab":"text"}}
-        onPointerDown={onDown} onClick={onClick}>
+      <div style={{position:"absolute",left:node.x,top:node.y}} onClick={onClick}>
         {delBtn}
+        {dragHandle}
         {selected && (
           <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-50,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:10,padding:"4px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.3)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:20,overflowX:"auto",maxWidth:"90vw"}}>
             <button onClick={()=>onUpdate({bold:!node.bold})} style={{fontWeight:"bold",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.bold?fmActive:"transparent",color:node.bold?fmText:fmMuted,flexShrink:0}}>B</button>
@@ -1577,12 +1588,13 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
 
   if (node.type === "note") return (
     <div style={{...baseStyle, width:node.w||200, minHeight:130, background:node.color||"#FFF176", display:"flex", flexDirection:"column"}}
-      onPointerDown={onDown} onClick={onClick}>
+      onClick={onClick}>
       {delBtn}
+      {dragHandle}
       <textarea value={node.text} onChange={e=>onUpdate({text:e.target.value})}
         onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onSelect();}}
         placeholder="Type something…"
-        style={{flex:1,background:"transparent",border:"none",outline:"none",padding:"14px 16px",fontSize:13,lineHeight:1.65,color:"#333",resize:"none",fontFamily:"inherit",minHeight:100,borderRadius:16}} />
+        style={{flex:1,background:"transparent",border:"none",outline:"none",padding:"4px 16px 14px",fontSize:13,lineHeight:1.65,color:"#333",resize:"none",fontFamily:"inherit",minHeight:100,borderRadius:16}} />
       {selected && <div style={{padding:"4px 12px 10px",display:"flex",gap:6}}>
         {noteColors.map(c=><button key={c} onPointerDown={e=>e.stopPropagation()} onClick={()=>onUpdate({color:c})}
           style={{width:18,height:18,borderRadius:"50%",background:c,border:node.color===c?"2.5px solid #333":"1.5px solid rgba(0,0,0,.18)",cursor:"pointer"}} />)}
@@ -1592,8 +1604,9 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
 
   if (node.type === "vault") { const {item} = node; return (
     <div style={{...baseStyle, width:node.w||240, background:isDark?"#1a1d2e":"#fff", overflow:"hidden"}}
-      onPointerDown={onDown} onClick={onClick}>
+      onClick={onClick}>
       {delBtn}
+      {dragHandle}
       {item.type==="image" && item.url && <img src={item.url} alt={item.title} style={{width:"100%",height:140,objectFit:"cover",display:"block",pointerEvents:"none"}} />}
       <div style={{padding:"10px 14px 12px"}}>
         <p style={{fontSize:12,fontWeight:700,color:isDark?"#eef":"#111",margin:0,marginBottom:item.note?4:0}}>{item.title}</p>
@@ -1720,9 +1733,9 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     return {dist:Math.hypot(b.x-a.x,b.y-a.y), cx:(a.x+b.x)/2, cy:(a.y+b.y)/2};
   };
 
-  const addNote = () => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"note",x:c.x-100,y:c.y-65,w:200,text:"",color:"#FFF176"}]); setShowVaultPicker(false); };
+  const addNote = () => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"note",x:c.x-100,y:c.y-65,w:200,text:"",color:"#FFF176"}]); setShowVaultPicker(false); setTool("select"); toolRef.current="select"; };
   const addText = (x,y) => setNodes(n=>[...n,{id:Date.now(),type:"text",x,y,text:"",fontSize:16,color:boardDark?"#ffffff":"#111111",bold:false,italic:false,w:200}]);
-  const addVault = (item) => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"vault",x:c.x-120,y:c.y-70,w:240,item}]); setShowVaultPicker(false); };
+  const addVault = (item) => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"vault",x:c.x-120,y:c.y-70,w:240,item}]); setShowVaultPicker(false); setTool("select"); toolRef.current="select"; };
   const deleteSelected = () => { if(!selectedId) return; setNodes(n=>n.filter(nd=>nd.id!==selectedId)); setSelectedId(null); };
 
   const eraseAt = (x,y) => {
