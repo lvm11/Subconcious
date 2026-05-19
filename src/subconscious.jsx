@@ -2800,7 +2800,7 @@ function QuickMediaVault() {
       <div className="relative mx-auto max-w-md">
         <header className="mb-6 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-[2rem] font-bold tracking-tight leading-none" style={{ color: t.text }}>{page === "creative" ? "Create" : page === "playlists" ? "Playlist" : page === "folders" ? "Vault" : "Flare"}</h1>
+            <h1 className="text-[2rem] font-bold tracking-tight leading-none" style={{ color: t.text }}>{page === "creative" ? "Sandbox" : page === "playlists" ? "Playlist" : page === "folders" ? "Vault" : "Flare"}</h1>
             <p className="mt-2 text-xs font-semibold tracking-[0.18em] uppercase" style={{ color: t.muted }}>By Loveem, For You.</p>
           </div>
           <div className="flex flex-col items-end gap-2">
@@ -2821,7 +2821,7 @@ function QuickMediaVault() {
 
       {!boardSession && <nav className="theme-bg fixed inset-x-4 z-20 mx-auto grid max-w-sm grid-cols-5 items-center gap-1 rounded-[1.6rem] p-1.5 backdrop-blur-2xl" style={{ bottom: "max(12px, env(safe-area-inset-bottom))", background: t.panel, boxShadow: `${t.shadow}, 0 0 40px ${t.glowA}22`, border: `1px solid ${t.border}` }}>
         <NavButton active={page === "vault"} icon={Feed} label="Feed" onClick={() => { setAddOpen(false); setPage("vault"); }} t={t} />
-        <NavButton active={page === "creative"} icon={Sparkles} label="Create" onClick={() => { setAddOpen(false); setPage("creative"); }} t={t} />
+        <NavButton active={page === "creative"} icon={Sparkles} label="Sandbox" onClick={() => { setAddOpen(false); setPage("creative"); }} t={t} />
         <button onClick={() => { setAddOpen((open) => !open); }} aria-label="Add" className="mx-auto flex h-12 w-12 items-center justify-center rounded-full transition active:scale-95" style={{ background: primaryBg, color: primaryText, boxShadow: addOpen ? `0 0 22px ${t.glowA}` : "0 10px 24px rgba(0,0,0,.24)" }}><Plus className="h-5 w-5" /></button>
         <NavButton active={page === "folders"} icon={Vault} label="Vault" onClick={() => { setAddOpen(false); setPage("folders"); }} t={t} />
         <NavButton active={page === "playlists"} icon={Music} label="Playlist" onClick={() => { setAddOpen(false); setPage("playlists"); }} t={t} />
