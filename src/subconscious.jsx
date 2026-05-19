@@ -183,22 +183,25 @@ function createAudioRecorder(stream) {
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
   const analyser = audioContext.createAnalyser();
   const microphone = audioContext.createMediaStreamSource(stream);
-  const recorder = new MediaRecorder(stream);
+  // Pick the best supported MIME type (iOS needs mp4, others prefer webm)
+  const mimeTypes = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus','audio/ogg'];
+  const mimeType = mimeTypes.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || '';
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
 
   microphone.connect(analyser);
 
   const chunks = [];
-  recorder.ondataavailable = (e) => chunks.push(e.data);
+  recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
   return {
     start() {
       chunks.length = 0;
-      recorder.start();
+      recorder.start(100); // 100ms timeslices for reliable capture
     },
     stop() {
       return new Promise(resolve => {
         recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: "audio/mp3" });
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
           resolve(blob);
         };
         recorder.stop();
@@ -216,18 +219,14 @@ function createAudioRecorder(stream) {
   };
 }
 
-async function uploadVoiceRecording(blob, title = "Voice Memo") {
-  const formData = new FormData();
-  formData.append("file", blob, `${title}.mp3`);
-
-  const response = await fetch("/upload", {
-    method: "POST",
-    body: formData
+// Store audio/voice as data URL — no server required
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
   });
-
-  if (!response.ok) throw new Error("Upload failed");
-  const result = await response.json();
-  return result.url;
 }
 
 function createIcon(paths) {
@@ -599,6 +598,10 @@ function Styles() {
     .note-body mark{border-radius:3px;padding:0 2px}
     .note-toolbar-btn{display:flex;align-items:center;justify-content:center;border-radius:10px;height:38px;min-width:38px;padding:0 8px;font-size:14px;font-weight:700;cursor:pointer;border:none;transition:background 120ms,color 120ms,transform 80ms;background:transparent;flex-shrink:0}
     .note-toolbar-btn:active{transform:scale(0.9)}
+    .safe-top{padding-top:env(safe-area-inset-top)}
+    .safe-bottom{padding-bottom:env(safe-area-inset-bottom)}
+    .note-body img{max-width:100%;border-radius:12px;margin:8px 0;display:block}
+    .note-body audio{width:100%;margin:8px 0;display:block}
   `}</style>;
 }
 
@@ -666,7 +669,7 @@ function SongCard({ item, t, theme, activeAudioId, setActiveAudioId, editorProps
   const isDark = theme === "dark";
   return (
     <article onClick={onOpen} className="card-press relative w-full min-w-0 cursor-pointer rounded-3xl backdrop-blur-xl" style={{ background: t.panel, boxShadow: t.shadow, border: `1px solid ${t.border}` }}>
-      {playable && <audio ref={audioRef} crossOrigin="anonymous" src={item.url} onTimeUpdate={onProgress} onEnded={endPlayback} onError={() => {}} style={{ display: "none" }} />}
+      {playable && <audio ref={audioRef} crossOrigin={item.url?.startsWith("data:") || item.url?.startsWith("blob:") ? undefined : "anonymous"} src={item.url} onTimeUpdate={onProgress} onEnded={endPlayback} onError={() => {}} style={{ display: "none" }} />}
       <div className="p-5">
         <div className="flex items-center gap-3">
           <button
@@ -703,7 +706,7 @@ function AudioCard({ item, t, theme, activeAudioId, setActiveAudioId }) {
   const { isPlaying, expanded, progress, fluidPath, fluidSpectrum, audioRef, playable, toggle, scrub, onProgress, endPlayback } = useAudioPlayback(item, activeAudioId, setActiveAudioId);
   return (
     <>
-      {playable && <audio ref={audioRef} crossOrigin="anonymous" src={item.url} onTimeUpdate={onProgress} onEnded={endPlayback} onError={() => {}} style={{ display: "none" }} />}
+      {playable && <audio ref={audioRef} crossOrigin={item.url?.startsWith("data:") || item.url?.startsWith("blob:") ? undefined : "anonymous"} src={item.url} onTimeUpdate={onProgress} onEnded={endPlayback} onError={() => {}} style={{ display: "none" }} />}
       <WaveformPlayer item={item} t={t} theme={theme} isPlaying={isPlaying} expanded={expanded} progress={progress} fluidPath={fluidPath} playable={playable} toggle={toggle} scrub={scrub} />
     </>
   );
@@ -808,9 +811,9 @@ function VoiceRecorder({ open, t, onRecord, close }) {
     streamRef.current = null;
     setRecording(false);
 
-    // Upload and add to vault
+    // Save locally as data URL — no server needed
     try {
-      const url = await uploadVoiceRecording(blob, `Voice-${Date.now()}`);
+      const url = await blobToDataUrl(blob);
       onRecord({
         type: "song",
         title: `Voice Memo - ${new Date().toLocaleTimeString()}`,
@@ -820,7 +823,7 @@ function VoiceRecorder({ open, t, onRecord, close }) {
       });
       close();
     } catch (err) {
-      console.error("Upload failed:", err);
+      console.error("Recording save failed:", err);
       setPermissionError("Failed to save recording. Please try again.");
     }
   };
@@ -934,6 +937,30 @@ function AddTrayPanel({ open, t, theme, inputStyle, mediaMode, setMediaMode, url
   );
 }
 
+function LinkPreviewCard({ url, t, className = "" }) {
+  let domain = "", faviconUrl = "";
+  try {
+    const parsed = new URL(url);
+    domain = parsed.hostname.replace(/^www\./, "");
+    faviconUrl = `https://www.google.com/s2/favicons?domain=${parsed.hostname}&sz=64`;
+  } catch {}
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+      className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 ${className}`}
+      style={{ background: t.input, border: `1px solid ${t.border}`, textDecoration: "none" }}>
+      {faviconUrl && (
+        <img src={faviconUrl} alt="" style={{ width: 28, height: 28, borderRadius: 8, flexShrink: 0, objectFit: "cover" }}
+          onError={e => e.currentTarget.style.display = "none"} />
+      )}
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: t.text, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{domain}</p>
+        <p style={{ fontSize: 10, color: t.muted, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{url.replace(/^https?:\/\//, "").slice(0, 60)}</p>
+      </div>
+      <ExternalLink className="h-3.5 w-3.5 shrink-0" style={{ color: t.muted }} />
+    </a>
+  );
+}
+
 function stripHtml(html) {
   if (!html) return '';
   if (!html.startsWith('<')) return html;
@@ -945,12 +972,12 @@ function stripHtml(html) {
     .replace(/\s+/g, ' ').trim();
 }
 
-function RichNoteEditor({ value, onChange, t }) {
+function RichNoteEditor({ value, onChange, t, onAttachImage, onAttachAudio }) {
   const editorRef = useRef(null);
   const [fmt, setFmt] = useState({ bold:false, italic:false, underline:false, strike:false });
   const [block, setBlock] = useState('p');
+  const [showAttach, setShowAttach] = useState(false);
 
-  // Set initial content once on mount
   useEffect(() => {
     if (!editorRef.current) return;
     const html = value && value.startsWith('<') ? value : value ? `<p>${value.replace(/\n/g,'</p><p>')}</p>` : '';
@@ -968,7 +995,7 @@ function RichNoteEditor({ value, onChange, t }) {
       let node = window.getSelection()?.getRangeAt(0)?.startContainer;
       while (node && node !== editorRef.current) {
         const tag = node.nodeName?.toLowerCase();
-        if (['h1','h2','h3','blockquote','pre'].includes(tag)) { setBlock(tag); return; }
+        if (['h1','pre'].includes(tag)) { setBlock(tag); return; }
         node = node.parentNode;
       }
       setBlock('p');
@@ -993,9 +1020,9 @@ function RichNoteEditor({ value, onChange, t }) {
     if (mod && e.key==='y') { e.preventDefault(); exec('redo'); }
   };
 
-  const Btn = ({ cmd, val=null, label, active, style={} }) => (
+  const Btn = ({ cmd, val=null, label, active }) => (
     <button className="note-toolbar-btn"
-      style={{ background: active ? t.active : 'transparent', color: active ? t.text : t.muted, ...style }}
+      style={{ background: active ? t.active : 'transparent', color: active ? t.text : t.muted }}
       onMouseDown={e => { e.preventDefault(); exec(cmd, val); }}>
       {label}
     </button>
@@ -1013,32 +1040,46 @@ function RichNoteEditor({ value, onChange, t }) {
 
   return (
     <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
-      {/* Row 1: Inline formatting — most used on mobile */}
+      {/* Single compact toolbar */}
       <div style={{ display:'flex', alignItems:'center', gap:2, padding:'4px 0', borderBottom:`1px solid ${t.border}`, overflowX:'auto', flexShrink:0 }} className="no-scrollbar">
         <Btn cmd="bold" label={<b>B</b>} active={fmt.bold} />
         <Btn cmd="italic" label={<i style={{fontFamily:'Georgia,serif'}}>I</i>} active={fmt.italic} />
         <Btn cmd="underline" label={<span style={{textDecoration:'underline'}}>U</span>} active={fmt.underline} />
         <Btn cmd="strikeThrough" label={<span style={{textDecoration:'line-through'}}>S</span>} active={fmt.strike} />
         {sep}
+        <BlkBtn tag="p" label="Text" />
+        <BlkBtn tag="h1" label="H1" />
+        <BlkBtn tag="pre" label="Code" />
+        {sep}
         <Btn cmd="insertUnorderedList" label="• List" />
         <Btn cmd="insertOrderedList" label="1. List" />
         {sep}
         <Btn cmd="undo" label="↩" />
         <Btn cmd="redo" label="↪" />
-      </div>
-      {/* Row 2: Block types + extras */}
-      <div style={{ display:'flex', alignItems:'center', gap:2, padding:'4px 0', borderBottom:`1px solid ${t.border}`, overflowX:'auto', flexShrink:0 }} className="no-scrollbar">
-        <BlkBtn tag="p" label="Text" />
-        <BlkBtn tag="h1" label="H1" />
-        <BlkBtn tag="h2" label="H2" />
-        <BlkBtn tag="h3" label="H3" />
-        <BlkBtn tag="blockquote" label="Quote" />
-        <BlkBtn tag="pre" label="Code" />
         {sep}
-        <Btn cmd="hiliteColor" val="#FFE066" label="Highlight" />
-        <Btn cmd="insertHorizontalRule" label="Divider" />
-        <button className="note-toolbar-btn" style={{ color:t.muted }}
-          onMouseDown={e => { e.preventDefault(); const url=prompt('URL:'); if(url) exec('createLink', url); }}>Link</button>
+        {/* + Attach media */}
+        <div style={{ position:'relative', flexShrink:0 }}>
+          <button className="note-toolbar-btn" style={{ color: t.muted }}
+            onMouseDown={e => { e.preventDefault(); setShowAttach(a => !a); }}>
+            <Plus className="h-4 w-4" />
+          </button>
+          {showAttach && (
+            <div onMouseDown={e=>e.stopPropagation()} style={{ position:'absolute', bottom:'calc(100% + 6px)', right:0, background:t.panel2, border:`1px solid ${t.border}`, borderRadius:14, padding:6, zIndex:200, boxShadow:t.shadow, minWidth:130 }}>
+              <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold"
+                style={{ color:t.text }} onMouseDown={e=>{ e.preventDefault(); setShowAttach(false); onAttachImage?.(); }}>
+                📷 Image
+              </button>
+              <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold"
+                style={{ color:t.text }} onMouseDown={e=>{ e.preventDefault(); setShowAttach(false); onAttachAudio?.(); }}>
+                🎵 Audio
+              </button>
+              <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold"
+                style={{ color:t.text }} onMouseDown={e=>{ e.preventDefault(); setShowAttach(false); const url=prompt('Link URL:'); if(url) exec('createLink', url); }}>
+                🔗 Link
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Editable area */}
@@ -1060,63 +1101,95 @@ function RichNoteEditor({ value, onChange, t }) {
 }
 
 function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchItem, close }) {
+  const imgInputRef = useRef(null);
+  const audInputRef = useRef(null);
   if (!item) return null;
+
+  const insertAttachment = (file, kind) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = String(reader.result || "");
+      const html = kind === "image"
+        ? `<img src="${src}" style="max-width:100%;border-radius:12px;margin:8px 0;display:block" />`
+        : `<audio controls src="${src}" style="width:100%;margin:8px 0;display:block"></audio>`;
+      patchItem(item.id, { note: (item.note || "") + html });
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center">
-      <button aria-label="Close" onClick={close} className="absolute inset-0 w-full backdrop-blur-xl" style={{ background: theme === "dark" ? "rgba(0,0,0,.55)" : "rgba(220,235,218,.6)" }} />
-      <article className="relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-t-[2rem]" style={{ height: "85vh", background: t.panel2, boxShadow: t.shadow, border: `1px solid ${t.border}`, animation: "slideUp 320ms cubic-bezier(0.32,0.72,0,1) both" }}>
+    <div className="fixed inset-0 z-40 flex flex-col" style={{ background: t.panel2, color: t.text, animation: "slideUp 280ms cubic-bezier(0.32,0.72,0,1) both" }}>
+      {/* Safe-area top spacer */}
+      <div style={{ height: "env(safe-area-inset-top)", background: t.panel2, flexShrink: 0 }} />
 
-        {/* drag handle */}
-        <div className="flex shrink-0 justify-center pt-3 pb-1">
-          <div className="h-1 w-10 rounded-full" style={{ background: t.border }} />
-        </div>
+      {/* Header */}
+      <div className="flex shrink-0 items-center gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${t.border}` }}>
+        <button onClick={close} className="flex h-10 w-10 items-center justify-center rounded-full transition active:scale-95" style={{ background: t.input, color: t.muted }}>
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span className="flex-1 text-center text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: t.muted }}>{item.folder || "Ideas"}</span>
+        <div style={{ width: 40 }} />
+      </div>
 
-        {/* toolbar */}
-        <div className="flex shrink-0 items-center justify-between px-5 pb-3">
-          <span className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: t.muted }}>{item.folder || "Ideas"}</span>
-          <button onClick={close} className="flex h-10 w-10 items-center justify-center rounded-full transition active:scale-95" style={{ background: t.input, color: t.muted }}><X className="h-4 w-4" /></button>
-        </div>
+      {/* Title + date */}
+      <div className="shrink-0 px-5 pt-4 pb-2">
+        <input
+          value={item.title}
+          onChange={e => patchItem(item.id, { title: e.target.value })}
+          placeholder="Title"
+          className="w-full bg-transparent text-[1.4rem] font-bold tracking-tight outline-none leading-snug"
+          style={{ color: t.text }}
+        />
+        <p className="mt-1 text-[11px]" style={{ color: t.soft }}>{dateLabel(item.createdAt)}</p>
+      </div>
 
+      <div className="mx-5 h-px shrink-0" style={{ background: t.border }} />
 
-        {/* scrollable body */}
-        <div className={`flex min-h-0 flex-1 flex-col px-5 pb-8 no-scrollbar ${item.type === "note" ? "overflow-hidden" : "overflow-y-auto"}`}>
-          <input
-            value={item.title}
-            onChange={(event) => patchItem(item.id, { title: event.target.value })}
-            placeholder="Title"
-            className="w-full bg-transparent text-[1.4rem] font-bold tracking-tight outline-none leading-snug"
-            style={{ color: t.text }}
+      {/* Body — fills remaining space */}
+      <div className="flex min-h-0 flex-1 flex-col px-5 overflow-hidden">
+        {item.type === "note" ? (
+          <RichNoteEditor
+            value={item.note || ""}
+            onChange={val => patchItem(item.id, { note: val })}
+            t={t}
+            onAttachImage={() => imgInputRef.current?.click()}
+            onAttachAudio={() => audInputRef.current?.click()}
           />
-          <p className="mt-1.5 text-[11px]" style={{ color: t.soft }}>{dateLabel(item.createdAt)}</p>
-
-          <div className="my-4 h-px" style={{ background: t.border }} />
-
-          {item.type === "note" ? (
-            <RichNoteEditor value={item.note || ''} onChange={val => patchItem(item.id, { note: val })} t={t} />
-          ) : (
+        ) : (
+          <div className="flex-1 overflow-y-auto pb-8 no-scrollbar pt-4">
             <textarea
               value={item.note || ""}
-              onChange={(event) => patchItem(item.id, { note: event.target.value })}
+              onChange={e => patchItem(item.id, { note: e.target.value })}
               placeholder="Add a note..."
-              className="min-h-[10rem] w-full flex-1 resize-none bg-transparent text-[15px] leading-[1.75] outline-none"
+              className="min-h-[6rem] w-full resize-none bg-transparent text-[15px] leading-[1.75] outline-none"
               style={{ color: t.text }}
             />
-          )}
+            {item.type === "song" && (
+              <div className="mt-4">
+                <AudioCard item={item} t={t} theme={theme} activeAudioId={activeAudioId} setActiveAudioId={setActiveAudioId} />
+              </div>
+            )}
+            {item.type === "image" && item.url && (
+              <div className="mt-4 overflow-hidden rounded-2xl">
+                <img src={item.url} alt={item.title} className="w-full h-auto" style={{ display: "block" }} />
+              </div>
+            )}
+            {item.type === "link" && item.url && (
+              <LinkPreviewCard url={normalizeUrl(item.url)} t={t} className="mt-4" />
+            )}
+          </div>
+        )}
+      </div>
 
-          {item.type === "song" && (
-            <div className="mt-4">
-              <AudioCard item={item} t={t} theme={theme} activeAudioId={activeAudioId} setActiveAudioId={setActiveAudioId} />
-            </div>
-          )}
+      {/* Hidden file inputs for note media attachment */}
+      <input ref={imgInputRef} type="file" accept="image/*" style={{ display: "none" }}
+        onChange={e => { insertAttachment(e.target.files?.[0], "image"); e.target.value = ""; }} />
+      <input ref={audInputRef} type="file" accept="audio/*" style={{ display: "none" }}
+        onChange={e => { insertAttachment(e.target.files?.[0], "audio"); e.target.value = ""; }} />
 
-          {item.url && item.type !== "song" && (
-            <a href={normalizeUrl(item.url)} target="_blank" rel="noopener noreferrer" className="mt-5 flex items-center gap-2.5 rounded-2xl px-4 py-3 text-xs font-medium" style={{ background: t.input, color: t.muted, border: `1px solid ${t.border}` }}>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0" style={{ color: t.soft }} />
-              <span className="truncate">{item.url.replace(/^https?:\/\//, "")}</span>
-            </a>
-          )}
-        </div>
-      </article>
+      {/* Safe-area bottom spacer */}
+      <div style={{ height: "env(safe-area-inset-bottom)", background: t.panel2, flexShrink: 0 }} />
     </div>
   );
 }
@@ -1469,14 +1542,19 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
         onPointerDown={onDown} onClick={onClick}>
         {delBtn}
         {selected && (
-          <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-46,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:10,padding:"4px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.3)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:20}}>
-            <button onClick={()=>onUpdate({bold:!node.bold})} style={{fontWeight:"bold",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.bold?fmActive:"transparent",color:node.bold?fmText:fmMuted}}>B</button>
-            <button onClick={()=>onUpdate({italic:!node.italic})} style={{fontStyle:"italic",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.italic?fmActive:"transparent",color:node.italic?fmText:fmMuted}}>I</button>
-            <div style={{width:1,height:16,background:fmBorder,margin:"0 2px"}}/>
+          <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-50,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:10,padding:"4px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.3)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:20,overflowX:"auto",maxWidth:"90vw"}}>
+            <button onClick={()=>onUpdate({bold:!node.bold})} style={{fontWeight:"bold",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.bold?fmActive:"transparent",color:node.bold?fmText:fmMuted,flexShrink:0}}>B</button>
+            <button onClick={()=>onUpdate({italic:!node.italic})} style={{fontStyle:"italic",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.italic?fmActive:"transparent",color:node.italic?fmText:fmMuted,flexShrink:0}}>I</button>
+            <div style={{width:1,height:16,background:fmBorder,margin:"0 2px",flexShrink:0}}/>
             {fontSizes.map(s=>(
-              <button key={s} onClick={()=>onUpdate({fontSize:s})} style={{fontSize:9,width:24,height:22,border:"none",borderRadius:5,cursor:"pointer",fontWeight:700,background:node.fontSize===s?fmActive:"transparent",color:node.fontSize===s?fmText:fmMuted}}>
+              <button key={s} onClick={()=>onUpdate({fontSize:s})} style={{fontSize:9,width:24,height:22,border:"none",borderRadius:5,cursor:"pointer",fontWeight:700,background:node.fontSize===s?fmActive:"transparent",color:node.fontSize===s?fmText:fmMuted,flexShrink:0}}>
                 {s<=12?"Xs":s<=16?"S":s<=20?"M":s<=28?"L":s<=36?"XL":"2X"}
               </button>
+            ))}
+            <div style={{width:1,height:16,background:fmBorder,margin:"0 2px",flexShrink:0}}/>
+            {["#ffffff","#111111","#1768FF","#FF3B30","#34C759","#FF9500","#FFCC00","#AF52DE","#FF2D55"].map(c=>(
+              <button key={c} onClick={()=>onUpdate({color:c})}
+                style={{width:18,height:18,borderRadius:"50%",background:c,border:(node.color||"#ffffff")===c?`2px solid ${fmText}`:"1.5px solid rgba(128,128,128,.3)",cursor:"pointer",flexShrink:0,boxShadow:c==="#ffffff"?"inset 0 0 0 1px rgba(0,0,0,.2)":"none"}} />
             ))}
           </div>
         )}
@@ -1529,13 +1607,19 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
   return null;
 }
 
-function CreativeSessions({ t, theme, sessions, onOpen, onCreate, onDelete }) {
+function CreativeSessions({ t, theme, sessions, onOpen, onCreate, onDelete, onRename }) {
   const isDark = ["dark","franki","grape"].includes(theme);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameVal, setRenameVal] = useState("");
+
+  const startRename = (s, e) => { e.stopPropagation(); setRenamingId(s.id); setRenameVal(s.name); };
+  const commitRename = (id) => { if (renameVal.trim()) onRename(id, renameVal.trim()); setRenamingId(null); };
+
   return (
     <div className="space-y-4 pt-1">
       <div className="grid grid-cols-2 gap-3">
         {sessions.map(s => (
-          <div key={s.id} className="relative group">
+          <div key={s.id} className="relative">
             <button onClick={() => onOpen(s)}
               style={{width:"100%",background:t.panel,border:`1px solid ${t.border}`,borderRadius:20,padding:"18px 14px 14px",textAlign:"left",cursor:"pointer",boxShadow:t.shadow,display:"block"}}>
               <div style={{height:72,borderRadius:12,marginBottom:12,background:isDark?"rgba(255,255,255,.04)":"rgba(0,0,0,.04)",display:"flex",alignItems:"center",justifyContent:"center",border:`1px solid ${t.border}`}}>
@@ -1543,11 +1627,29 @@ function CreativeSessions({ t, theme, sessions, onOpen, onCreate, onDelete }) {
                   ? <span style={{fontSize:11,color:t.muted}}>{s.nodes.length} item{s.nodes.length!==1?"s":""}</span>
                   : <span style={{fontSize:22,opacity:.3}}>✦</span>}
               </div>
-              <p style={{fontSize:13,fontWeight:700,color:t.text,margin:0,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
+              {renamingId === s.id ? (
+                <input
+                  value={renameVal}
+                  onChange={e => setRenameVal(e.target.value)}
+                  onBlur={() => commitRename(s.id)}
+                  onKeyDown={e => { if(e.key==="Enter") commitRename(s.id); if(e.key==="Escape") setRenamingId(null); }}
+                  autoFocus
+                  onClick={e => e.stopPropagation()}
+                  style={{width:"100%",background:"transparent",border:"none",outline:`1px solid ${t.border}`,borderRadius:6,fontSize:13,fontWeight:700,color:t.text,padding:"2px 4px"}}
+                />
+              ) : (
+                <p style={{fontSize:13,fontWeight:700,color:t.text,margin:0,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
+              )}
               <p style={{fontSize:10,color:t.muted,margin:0}}>{new Date(s.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</p>
             </button>
-            <button onClick={() => onDelete(s.id)}
-              style={{position:"absolute",top:8,right:8,width:22,height:22,background:"rgba(255,100,100,.18)",border:"none",borderRadius:"50%",cursor:"pointer",fontSize:14,color:"#ff6b6b",display:"flex",alignItems:"center",justifyContent:"center",opacity:0.7}}>×</button>
+            {/* Rename button */}
+            <button onClick={e => startRename(s, e)}
+              style={{position:"absolute",top:8,left:8,width:24,height:24,background:"rgba(128,128,128,.18)",border:"none",borderRadius:"50%",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Pencil style={{width:10,height:10,color:t.muted}} />
+            </button>
+            {/* Delete button */}
+            <button onClick={e => { e.stopPropagation(); onDelete(s.id); }}
+              style={{position:"absolute",top:8,right:8,width:24,height:24,background:"rgba(255,100,100,.18)",border:"none",borderRadius:"50%",cursor:"pointer",fontSize:14,color:"#ff6b6b",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
           </div>
         ))}
         <button onClick={onCreate}
@@ -1573,7 +1675,8 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const [tool, setTool] = useState("select");
   const [drawColor, setDrawColor] = useState("#1768FF");
   const [drawWidth, setDrawWidth] = useState(3);
-  const [boardDark, setBoardDark] = useState(true);
+  // boardDark derived from theme — no manual toggle needed
+  const boardDark = hexLuminance(t.page) < 0.35;
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [currentDraw, setCurrentDraw] = useState(null);
   const [lineStart, setLineStart] = useState(null);
@@ -1747,7 +1850,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     return ()=>el.removeEventListener("wheel",fn);
   },[]);
 
-  const bg = boardDark?"#0c0e1c":"#f7f7f5";
+  const bg = t.page; // Always use theme color — no white board
   const dot = boardDark?"rgba(255,255,255,.05)":"rgba(0,0,0,.07)";
   const sp = 24*scale;
   const tbBg = boardDark?"rgba(7,8,18,.96)":"rgba(248,248,246,.96)";
@@ -1785,7 +1888,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
           <rect width="100%" height="100%" fill="url(#bdots)"/>
         </svg>
 
-        <div style={{position:"absolute",top:16,left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:600,color:boardDark?"rgba(255,255,255,.18)":"rgba(0,0,0,.14)",letterSpacing:"0.1em",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
+        <div style={{position:"absolute",top:"max(16px, calc(env(safe-area-inset-top) + 8px))",left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:600,color:boardDark?"rgba(255,255,255,.18)":"rgba(0,0,0,.14)",letterSpacing:"0.1em",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
 
         <div style={{position:"absolute",inset:0,overflow:"visible",pointerEvents:"none"}}>
           <div style={{position:"absolute",left:0,top:0,transform:`translate(${offset.x}px,${offset.y}px) scale(${scale})`,transformOrigin:"0 0",pointerEvents:"none"}}>
@@ -1834,7 +1937,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
       </div>
 
       {/* Two-row mobile-friendly toolbar */}
-      <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,background:tbBg,backdropFilter:"blur(24px)",borderTop:`1px solid ${tbBorder}`}}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,background:tbBg,backdropFilter:"blur(24px)",borderTop:`1px solid ${tbBorder}`,paddingBottom:"env(safe-area-inset-bottom)"}}
         onPointerDown={e=>e.stopPropagation()}>
 
         {/* Row 1 — tool picker as a centred segmented pill */}
@@ -1880,17 +1983,10 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
             </button>
           </div>
 
-          {/* Right: dark/light + zoom */}
+          {/* Right: zoom reset */}
           <div style={{display:"flex",alignItems:"center",gap:5}}>
-            <button onClick={()=>setBoardDark(d=>!d)} title={boardDark?"Light board":"Dark board"}
-              style={{...btnBase,padding:"9px 11px",background:tbGroupBg,borderRadius:12,color:tbMuted}}>
-              {boardDark
-                ? <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-                : <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-              }
-            </button>
             <button onClick={()=>{setOffset({x:0,y:0});setScale(1);}} title="Reset view"
-              style={{...btnBase,padding:"9px 10px",background:tbGroupBg,borderRadius:12,color:tbMuted,minWidth:48,fontSize:10,fontWeight:700}}>
+              style={{...btnBase,padding:"9px 14px",background:tbGroupBg,borderRadius:12,color:tbMuted,fontSize:10,fontWeight:700}}>
               {Math.round(scale*100)}%
             </button>
           </div>
@@ -1937,6 +2033,8 @@ function QuickMediaVault() {
   const [playlistDuration, setPlaylistDuration] = useState(0);
   const [syncStatus, setSyncStatus] = useState({ syncing: false, pending: 0 });
   const [sessions, setSessions] = useState(loadFromStorage("subconscious_sessions", []));
+  const [renamingFolder, setRenamingFolder] = useState(null);
+  const [renameFolderVal, setRenameFolderVal] = useState("");
   const [boardSession, setBoardSession] = useState(null);
   const playlistAudioRef = useRef(null);
   const playlistAnalyserRef = useRef(null);
@@ -2063,11 +2161,12 @@ function QuickMediaVault() {
   useEffect(() => {
     (async () => {
       try {
-        const itemsToSave = items.filter(item => !(item.type === "song" && item.url && item.url.startsWith("data:")));
         await dbClear("items");
-        for (const item of itemsToSave) {
-          await dbPut("items", item);
-          await queueOp("UPDATE", "item", item.id, item);
+        for (const item of items) {
+          await dbPut("items", item); // Save all items including data: URLs
+          if (!item.url?.startsWith("data:")) {
+            await queueOp("UPDATE", "item", item.id, item);
+          }
         }
       } catch (e) {
         console.error("Failed to save items:", e);
@@ -2112,9 +2211,14 @@ function QuickMediaVault() {
     })();
   }, [theme]);
 
-  // Auto-save to localStorage
+  // Auto-save to localStorage — strip very large data URLs to stay under quota
   useEffect(() => {
-    saveToStorage("subconscious_items", items);
+    const compact = items.map(item =>
+      item.url?.startsWith("data:") && item.url.length > 150000
+        ? { ...item, url: "" }
+        : item
+    );
+    saveToStorage("subconscious_items", compact);
   }, [items]);
 
   useEffect(() => {
@@ -2173,17 +2277,13 @@ function QuickMediaVault() {
   };
   const addAudioFile = (file) => {
     if (!file) return;
-    const formData = new FormData();
-    formData.append("file", file);
-
-    fetch("/upload", { method: "POST", body: formData })
-      .then(res => res.json())
-      .then(data => {
-        setItems((current) => [{ id: newId(), type: "song", title: file.name.replace(/\.[^/.]+$/, ""), url: data.url, fileName: file.name, note: note.trim(), folder, createdAt: Date.now() }, ...current]);
-        setActiveFilter("audio");
-        resetCapture();
-      })
-      .catch(() => console.error("Upload failed"));
+    const reader = new FileReader();
+    reader.onload = () => {
+      setItems(current => [{ id: newId(), type: "song", title: file.name.replace(/\.[^/.]+$/, ""), url: String(reader.result || ""), fileName: file.name, note: note.trim(), folder, createdAt: Date.now() }, ...current]);
+      setActiveFilter("audio");
+      resetCapture();
+    };
+    reader.readAsDataURL(file);
   };
   const createFolder = () => {
     const next = newFolderName.trim();
@@ -2192,6 +2292,14 @@ function QuickMediaVault() {
     setSelectedFolder(next);
     setFolder(next);
     setNewFolderName("");
+  };
+  const renameFolder = (oldName, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    setFolderNames(prev => prev.map(f => f === oldName ? trimmed : f));
+    setItems(prev => prev.map(item => (item.folder || "Ideas") === oldName ? { ...item, folder: trimmed } : item));
+    if (selectedFolder === oldName) setSelectedFolder(trimmed);
+    setRenamingFolder(null);
   };
   const pullFromSubconscious = () => {
     if (!items.length) return;
@@ -2256,8 +2364,11 @@ function QuickMediaVault() {
             </div>
             <PostMenu item={item} folders={folders} t={t} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} patchItem={patchItem} removeItem={removeItem} />
           </div>
-          {item.type !== "note" && item.url && (
-            <a href={normalizeUrl(item.url)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="mt-3 flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-[11px] font-medium" style={{ background: t.input, color: t.soft, border: `1px solid ${t.border}` }}>
+          {item.type === "link" && item.url && (
+            <LinkPreviewCard url={normalizeUrl(item.url)} t={t} className="mt-3" />
+          )}
+          {item.type === "song" && item.url && !item.url.startsWith("data:") && (
+            <a href={normalizeUrl(item.url)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="mt-3 flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-[11px] font-medium" style={{ background: t.input, color: t.soft, border: `1px solid ${t.border}` }}>
               <ExternalLink className="h-3 w-3 shrink-0" />
               <span className="truncate">{item.url.replace(/^https?:\/\//, "")}</span>
             </a>
@@ -2293,11 +2404,35 @@ function QuickMediaVault() {
         <div className="grid grid-cols-2 gap-2">
           {folders.map((name) => {
             const count = items.filter((item) => (item.folder || "Ideas") === name).length;
+            const isRenaming = renamingFolder === name;
             return (
-              <button key={name} onClick={() => setSelectedFolder(name)} className="flex items-center gap-3 rounded-2xl p-3 text-left" style={{ background: selectedFolder === name ? t.active : t.input, color: t.text }}>
-                <Folder className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold">{name}</span><span className="block text-[10px]" style={{ color: t.muted }}>{count} saved</span></span>
-              </button>
+              <div key={name} className="relative">
+                <button onClick={() => setSelectedFolder(name)} className="flex w-full items-center gap-3 rounded-2xl p-3 text-left" style={{ background: selectedFolder === name ? t.active : t.input, color: t.text }}>
+                  <Folder className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 pr-5">
+                    {isRenaming ? (
+                      <input
+                        value={renameFolderVal}
+                        onChange={e => setRenameFolderVal(e.target.value)}
+                        onBlur={() => renameFolder(name, renameFolderVal)}
+                        onKeyDown={e => { if(e.key==="Enter") renameFolder(name, renameFolderVal); if(e.key==="Escape") setRenamingFolder(null); }}
+                        autoFocus
+                        onClick={e => e.stopPropagation()}
+                        className="block w-full bg-transparent outline-none text-xs font-semibold"
+                        style={{ color: t.text }}
+                      />
+                    ) : (
+                      <span className="block truncate text-xs font-semibold">{name}</span>
+                    )}
+                    <span className="block text-[10px]" style={{ color: t.muted }}>{count} saved</span>
+                  </span>
+                </button>
+                <button onClick={e => { e.stopPropagation(); setRenamingFolder(name); setRenameFolderVal(name); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full"
+                  style={{ background: "rgba(128,128,128,.15)", color: t.muted }}>
+                  <Pencil style={{ width: 10, height: 10 }} />
+                </button>
+              </div>
             );
           })}
         </div>
@@ -2313,11 +2448,16 @@ function QuickMediaVault() {
     setSessions(prev => [...prev, s]);
     setBoardSession(s);
   };
+  const renameSession = (id, newName) => {
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, name: newName } : s));
+    if (boardSession?.id === id) setBoardSession(prev => prev ? { ...prev, name: newName } : prev);
+  };
   const creativePage = (
     <CreativeSessions t={t} theme={theme} sessions={sessions}
       onOpen={(s) => setBoardSession(s)}
       onCreate={createSession}
-      onDelete={(id) => setSessions(prev => prev.filter(s => s.id !== id))} />
+      onDelete={(id) => setSessions(prev => prev.filter(s => s.id !== id))}
+      onRename={renameSession} />
   );
 
   const songs = items.filter((item) => item.type === "song");
@@ -2454,8 +2594,10 @@ function QuickMediaVault() {
   const currentPage = page === "vault" ? vaultPage : page === "creative" ? creativePage : page === "folders" ? foldersPage : playlistPage;
 
   return (
-    <div className="theme-bg min-h-screen px-4 pb-32 pt-5" style={{ background: t.page, color: t.text }}>
+    <div className="theme-bg min-h-screen px-4" style={{ background: t.page, color: t.text, paddingTop: "max(20px, env(safe-area-inset-top))", paddingBottom: "calc(7rem + env(safe-area-inset-bottom))" }}>
       <Styles />
+      {/* Fixed background — prevents white overscroll flash */}
+      <div style={{ position: "fixed", inset: 0, background: t.page, zIndex: -1 }} />
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -left-32 -top-16 h-96 w-96 rounded-full blur-3xl" style={{ background: t.glowA, opacity: theme === "dark" ? 0.15 : 0.22 }} />
         <div className="absolute -right-32 top-48 h-80 w-80 rounded-full blur-3xl" style={{ background: t.glowC, opacity: theme === "dark" ? 0.13 : 0.18 }} />
@@ -2464,7 +2606,7 @@ function QuickMediaVault() {
       <div className="relative mx-auto max-w-md">
         <header className="mb-6 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-[2rem] font-bold tracking-tight leading-none" style={{ color: t.text }}>{page === "creative" ? "Create" : page === "playlists" ? "Playlist" : page === "folders" ? "Vault" : "Limitless"}</h1>
+            <h1 className="text-[2rem] font-bold tracking-tight leading-none" style={{ color: t.text }}>{page === "creative" ? "Create" : page === "playlists" ? "Playlist" : page === "folders" ? "Vault" : "Flare"}</h1>
             <p className="mt-2 text-xs font-semibold tracking-[0.18em] uppercase" style={{ color: t.muted }}>By Loveem, For You.</p>
           </div>
           <div className="flex flex-col items-end gap-2">
@@ -2483,7 +2625,7 @@ function QuickMediaVault() {
       <VoiceRecorder open={voiceRecorderOpen} t={t} onRecord={(recording) => { setItems((current) => [{ id: newId(), type: "song", title: recording.title, url: recording.url, note: recording.note || "", folder, createdAt: Date.now() }, ...current]); setActiveFilter("audio"); setVoiceRecorderOpen(false); }} close={() => setVoiceRecorderOpen(false)} />
       <ExpandedPost item={expandedItem} t={t} theme={theme} activeAudioId={activeAudioId} setActiveAudioId={setActiveAudioId} patchItem={patchItem} close={() => setExpandedItemId(null)} />
 
-      {!boardSession && <nav className="theme-bg fixed inset-x-4 bottom-5 z-20 mx-auto grid max-w-sm grid-cols-5 items-center gap-1 rounded-[1.6rem] p-1.5 backdrop-blur-2xl" style={{ background: t.panel, boxShadow: `${t.shadow}, 0 0 40px ${t.glowA}22`, border: `1px solid ${t.border}` }}>
+      {!boardSession && <nav className="theme-bg fixed inset-x-4 z-20 mx-auto grid max-w-sm grid-cols-5 items-center gap-1 rounded-[1.6rem] p-1.5 backdrop-blur-2xl" style={{ bottom: "max(12px, env(safe-area-inset-bottom))", background: t.panel, boxShadow: `${t.shadow}, 0 0 40px ${t.glowA}22`, border: `1px solid ${t.border}` }}>
         <NavButton active={page === "vault"} icon={Feed} label="Feed" onClick={() => { setAddOpen(false); setPage("vault"); }} t={t} />
         <NavButton active={page === "creative"} icon={Sparkles} label="Create" onClick={() => { setAddOpen(false); setPage("creative"); }} t={t} />
         <button onClick={() => { setAddOpen((open) => !open); }} aria-label="Add" className="mx-auto flex h-12 w-12 items-center justify-center rounded-full transition active:scale-95" style={{ background: primaryBg, color: primaryText, boxShadow: addOpen ? `0 0 22px ${t.glowA}` : "0 10px 24px rgba(0,0,0,.24)" }}><Plus className="h-5 w-5" /></button>
