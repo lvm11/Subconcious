@@ -907,28 +907,23 @@ function AddTrayPanel({ open, t, theme, inputStyle, mediaMode, setMediaMode, url
         <div className="pb-2 pr-10">
           <p className="text-sm font-semibold" style={{ color: t.text }}>Capture something</p>
         </div>
-        <div className="grid grid-cols-5 gap-2 pt-3">
+        <div className="grid grid-cols-4 gap-2 pt-3">
           <MediaButton active={mediaMode === "link"} onClick={() => setMediaMode("link")} icon={Link2} label="Link" t={t} />
           <MediaButton active={mediaMode === "note"} onClick={() => setMediaMode("note")} icon={FileText} label="Note" t={t} />
-          <label className="flex cursor-pointer flex-col items-center gap-2 transition active:scale-95" style={{ color: t.muted }}>
-            <span className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: t.input, color: t.muted }}><Image className="h-5 w-5" /></span>
-            <span style={{ fontSize: 10, fontWeight: 600 }}>Image</span>
-            <input type="file" accept="image/*" onChange={(event) => { addImageFile(event.target.files?.[0]); event.target.value = ""; }} className="hidden" />
-          </label>
           <button onClick={onVoiceRecord} className="flex cursor-pointer flex-col items-center gap-2 transition active:scale-95" style={{ color: t.muted }}>
             <span className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: t.input, color: t.muted }}><Mic className="h-5 w-5" /></span>
             <span style={{ fontSize: 10, fontWeight: 600 }}>Voice</span>
           </button>
           <label className="flex cursor-pointer flex-col items-center gap-2 transition active:scale-95" style={{ color: t.muted }}>
-            <span className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: t.input, color: t.muted }}><Music className="h-5 w-5" /></span>
-            <span style={{ fontSize: 10, fontWeight: 600 }}>Audio</span>
-            <input type="file" accept="audio/*" onChange={(event) => { addAudioFile(event.target.files?.[0]); event.target.value = ""; }} className="hidden" />
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: t.input, color: t.muted }}><Image className="h-5 w-5" /></span>
+            <span style={{ fontSize: 10, fontWeight: 600 }}>Media</span>
+            <input type="file" accept="image/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.opus,.webm,.mp4" onChange={(event) => { const f = event.target.files?.[0]; if (f) { f.type.startsWith("image/") ? addImageFile(f) : addAudioFile(f); } event.target.value = ""; }} className="hidden" />
           </label>
         </div>
         {showTextFields && (
           <div className="mt-6 space-y-3">
-            {mediaMode === "link" && <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Paste link..." autoFocus className="tray-input w-full rounded-2xl px-5 py-4 text-sm outline-none" style={{ background: t.input, color: t.text }} />}
-            <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={mediaMode === "link" ? "Add a note..." : "Write note..."} autoFocus={mediaMode === "note"} className="tray-input min-h-20 w-full resize-none rounded-2xl px-5 py-4 text-sm outline-none" style={{ background: t.input, color: t.text }} />
+            {mediaMode === "link" && <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Paste link..." className="tray-input w-full rounded-2xl px-5 py-4 text-sm outline-none" style={{ background: t.input, color: t.text }} />}
+            <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={mediaMode === "link" ? "Add a note..." : "Write note..."} className="tray-input min-h-20 w-full resize-none rounded-2xl px-5 py-4 text-sm outline-none" style={{ background: t.input, color: t.text }} />
             <button onClick={addItem} className="flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold" style={{ background: primaryBg, color: primaryText }}><Plus className="h-4 w-4" />Save to vault</button>
           </div>
         )}
@@ -1119,9 +1114,9 @@ function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchIt
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col" style={{ background: t.panel2, color: t.text, animation: "slideUp 280ms cubic-bezier(0.32,0.72,0,1) both" }}>
+    <div className="fixed inset-0 z-40 flex flex-col" style={{ background: t.page, color: t.text, animation: "slideUp 280ms cubic-bezier(0.32,0.72,0,1) both" }}>
       {/* Safe-area top spacer */}
-      <div style={{ height: "env(safe-area-inset-top)", background: t.panel2, flexShrink: 0 }} />
+      <div style={{ height: "env(safe-area-inset-top)", background: t.page, flexShrink: 0 }} />
 
       {/* Header */}
       <div className="flex shrink-0 items-center gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${t.border}` }}>
@@ -1189,7 +1184,7 @@ function ExpandedPost({ item, t, theme, activeAudioId, setActiveAudioId, patchIt
         onChange={e => { insertAttachment(e.target.files?.[0], "audio"); e.target.value = ""; }} />
 
       {/* Safe-area bottom spacer */}
-      <div style={{ height: "env(safe-area-inset-bottom)", background: t.panel2, flexShrink: 0 }} />
+      <div style={{ height: "env(safe-area-inset-bottom)", background: t.page, flexShrink: 0 }} />
     </div>
   );
 }
@@ -1520,8 +1515,10 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
 
   const baseStyle = {
     position:"absolute", left:node.x, top:node.y,
-    boxShadow: selected ? "0 0 0 2.5px #1768FF, 0 8px 32px rgba(0,0,0,.25)" : "0 4px 24px rgba(0,0,0,.18)",
+    boxShadow: selected ? "0 0 0 2.5px #1768FF, 0 12px 40px rgba(0,0,0,.35)" : "0 4px 20px rgba(0,0,0,.22)",
     borderRadius:16, cursor:isSelect?"grab":"default", userSelect:"none",
+    transition:"box-shadow .15s ease",
+    willChange:"transform",
   };
   const onDown = (e) => { if(!isSelect) return; onDragStart(e); };
   const onClick = () => { if(isSelect) onSelect(); };
@@ -1675,8 +1672,8 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const [tool, setTool] = useState("select");
   const [drawColor, setDrawColor] = useState("#1768FF");
   const [drawWidth, setDrawWidth] = useState(3);
-  // boardDark derived from theme — no manual toggle needed
-  const boardDark = hexLuminance(t.page) < 0.35;
+  // Board is always dark regardless of app theme
+  const boardDark = true;
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [currentDraw, setCurrentDraw] = useState(null);
   const [lineStart, setLineStart] = useState(null);
@@ -1700,7 +1697,13 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { drawColorRef.current = drawColor; }, [drawColor]);
   useEffect(() => { drawWidthRef.current = drawWidth; }, [drawWidth]);
-  useEffect(() => { onSave(nodes); }, [nodes]);
+  // Debounce saves — don't write to storage on every pointer-move frame
+  const saveTimerRef = useRef(null);
+  useEffect(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => onSave(nodes), 600);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [nodes]);
 
   const toCanvas = (sx, sy) => {
     const r = containerRef.current?.getBoundingClientRect() || {left:0,top:0};
@@ -1850,7 +1853,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     return ()=>el.removeEventListener("wheel",fn);
   },[]);
 
-  const bg = t.page; // Always use theme color — no white board
+  const bg = "#0d0f1e"; // Always dark canvas
   const dot = boardDark?"rgba(255,255,255,.05)":"rgba(0,0,0,.07)";
   const sp = 24*scale;
   const tbBg = boardDark?"rgba(7,8,18,.96)":"rgba(248,248,246,.96)";
@@ -1888,10 +1891,17 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
           <rect width="100%" height="100%" fill="url(#bdots)"/>
         </svg>
 
-        <div style={{position:"absolute",top:"max(16px, calc(env(safe-area-inset-top) + 8px))",left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:600,color:boardDark?"rgba(255,255,255,.18)":"rgba(0,0,0,.14)",letterSpacing:"0.1em",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
+        <div style={{position:"absolute",top:"max(16px, calc(env(safe-area-inset-top) + 8px))",left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:700,color:"rgba(255,255,255,.28)",letterSpacing:"0.12em",textTransform:"uppercase",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
+        {nodes.length === 0 && (
+          <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",textAlign:"center",pointerEvents:"none",userSelect:"none"}}>
+            <div style={{fontSize:36,opacity:.15,marginBottom:12}}>✦</div>
+            <p style={{fontSize:13,color:"rgba(255,255,255,.22)",fontWeight:600,margin:"0 0 4px"}}>Empty canvas</p>
+            <p style={{fontSize:11,color:"rgba(255,255,255,.14)",margin:0}}>Use the toolbar below to add notes, text, or drawings</p>
+          </div>
+        )}
 
         <div style={{position:"absolute",inset:0,overflow:"visible",pointerEvents:"none"}}>
-          <div style={{position:"absolute",left:0,top:0,transform:`translate(${offset.x}px,${offset.y}px) scale(${scale})`,transformOrigin:"0 0",pointerEvents:"none"}}>
+          <div style={{position:"absolute",left:0,top:0,transform:`translate(${offset.x}px,${offset.y}px) scale(${scale})`,transformOrigin:"0 0",pointerEvents:"none",willChange:"transform"}}>
             <svg style={{position:"absolute",left:0,top:0,overflow:"visible",width:1,height:1,pointerEvents:"none"}}>
               {drawNodes.map(nd=>nd.type==="drawing"
                 ? <polyline key={nd.id} points={nd.points.map(p=>`${p.x},${p.y}`).join(" ")} stroke={nd.color} strokeWidth={nd.width} fill="none" strokeLinecap="round" strokeLinejoin="round"/>
@@ -1918,7 +1928,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
         </div>
 
         {showVaultPicker&&(
-          <div style={{position:"absolute",bottom:128,left:"50%",transform:"translateX(-50%)",width:300,maxHeight:240,overflowY:"auto",background:t.panel,boxShadow:t.shadow,border:`1px solid ${t.border}`,borderRadius:20,padding:10,zIndex:60}}
+          <div style={{position:"absolute",bottom:"calc(144px + env(safe-area-inset-bottom))",left:"50%",transform:"translateX(-50%)",width:300,maxHeight:240,overflowY:"auto",background:t.panel,boxShadow:t.shadow,border:`1px solid ${t.border}`,borderRadius:20,padding:10,zIndex:60}}
             onPointerDown={e=>e.stopPropagation()}>
             <p style={{fontSize:10,fontWeight:700,letterSpacing:"0.15em",textTransform:"uppercase",color:t.muted,padding:"4px 8px 8px"}}>From vault</p>
             {vaultItems.length===0&&<p style={{fontSize:12,color:t.muted,textAlign:"center",padding:"12px 0"}}>No vault items yet</p>}
