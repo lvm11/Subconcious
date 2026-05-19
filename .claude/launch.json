@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "subconscious",
+      "runtimeExecutable": "C:\\Users\\juuj1\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\bin\\node.exe",
+      "runtimeArgs": ["server.mjs"],
+      "port": 4173
+    }
+  ]
+}
