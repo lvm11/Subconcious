@@ -1485,7 +1485,7 @@ function ColorPicker({ color, onChange, strokeWidth, onWidthChange, onClose, boa
   const muted = boardDark ? "rgba(255,255,255,.35)" : "rgba(0,0,0,.35)";
   const active = boardDark ? "rgba(255,255,255,.15)" : "rgba(0,0,0,.12)";
   return (
-    <div onPointerDown={e=>e.stopPropagation()} style={{position:"fixed",bottom:"calc(148px + env(safe-area-inset-bottom))",left:"50%",transform:"translateX(-50%)",background:bg,borderRadius:20,padding:16,zIndex:62,boxShadow:"0 8px 40px rgba(0,0,0,.45)",border:`1px solid ${border}`,minWidth:230}}>
+    <div onPointerDown={e=>e.stopPropagation()} style={{position:"fixed",bottom:"calc(88px + env(safe-area-inset-bottom))",left:"50%",transform:"translateX(-50%)",background:bg,borderRadius:20,padding:16,zIndex:62,boxShadow:"0 8px 40px rgba(0,0,0,.45)",border:`1px solid ${border}`,minWidth:230}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:muted}}>Color & Stroke</span>
         <button onClick={onClose} style={{fontSize:14,border:"none",background:"transparent",cursor:"pointer",color:muted,lineHeight:1,padding:4}}>✕</button>
@@ -1518,75 +1518,87 @@ function ColorPicker({ color, onChange, strokeWidth, onWidthChange, onClose, boa
 
 function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDragStart, onUpdate, onDelete }) {
   const noteColors = ["#FFF176","#A8D8EA","#FFDAC1","#B5EAD7","#C7CEEA","#FFB7B2"];
-  const isDark = ["dark","franki","grape"].includes(theme);
   const isSelect = tool === "select";
+
+  // Freeform-style: drag from anywhere on the node (not just a handle strip)
+  const onDown = (e) => {
+    if (!isSelect) return;
+    const tag = e.target.tagName;
+    // Let buttons, inputs and textareas handle their own events
+    if (tag === "BUTTON" || tag === "INPUT" || tag === "A") return;
+    onDragStart(e);
+  };
+  const onClick = () => { if (isSelect) onSelect(); };
+
+  // Freeform-style blue selection handles: border + 8 corner/edge dots
+  const selHandles = selected ? (
+    <div style={{position:"absolute",inset:-5,borderRadius:20,border:"2px solid #1768FF",pointerEvents:"none",zIndex:15}}>
+      {[
+        {top:-5,left:-5},{top:-5,left:"calc(50% - 5px)"},{top:-5,right:-5},
+        {top:"calc(50% - 5px)",right:-5},
+        {bottom:-5,right:-5},{bottom:-5,left:"calc(50% - 5px)"},{bottom:-5,left:-5},
+        {top:"calc(50% - 5px)",left:-5},
+      ].map((pos,i)=>(
+        <div key={i} style={{position:"absolute",...pos,width:10,height:10,borderRadius:"50%",background:"#1768FF",border:"2.5px solid #fff",boxShadow:"0 1px 5px rgba(23,104,255,.45)"}}/>
+      ))}
+    </div>
+  ) : null;
 
   const baseStyle = {
     position:"absolute", left:node.x, top:node.y,
-    boxShadow: selected ? "0 0 0 2.5px #1768FF, 0 12px 40px rgba(0,0,0,.35)" : "0 4px 20px rgba(0,0,0,.22)",
     borderRadius:16, cursor:isSelect?"grab":"default", userSelect:"none",
+    boxShadow: selected ? "0 8px 36px rgba(0,0,0,.18)" : "0 4px 20px rgba(0,0,0,.18)",
     transition:"box-shadow .15s ease",
     willChange:"transform",
   };
-  const onDown = (e) => { if(!isSelect) return; onDragStart(e); };
-  const onClick = () => { if(isSelect) onSelect(); };
-  // Drag handle: touch/click this to drag. Bubbles to board container for pointer capture.
-  const dragHandle = isSelect ? (
-    <div onPointerDown={onDown}
-      style={{display:"flex",alignItems:"center",justifyContent:"center",height:22,cursor:"grab",flexShrink:0,touchAction:"none",userSelect:"none",opacity:0.45}}>
-      <svg width="20" height="8" viewBox="0 0 20 8" fill="currentColor" style={{color:"#888"}}>
-        <circle cx="4" cy="2" r="1.5"/><circle cx="10" cy="2" r="1.5"/><circle cx="16" cy="2" r="1.5"/>
-        <circle cx="4" cy="6" r="1.5"/><circle cx="10" cy="6" r="1.5"/><circle cx="16" cy="6" r="1.5"/>
-      </svg>
-    </div>
-  ) : <div style={{height:22}}/>;
-  const delBtn = selected ? (
-    <button onPointerDown={e=>e.stopPropagation()} onClick={onDelete}
-      style={{position:"absolute",top:-11,right:-11,width:24,height:24,background:"#FF6B6B",color:"#fff",border:"none",borderRadius:"50%",cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",zIndex:10,boxShadow:"0 2px 8px rgba(0,0,0,.3)"}}>×</button>
-  ) : null;
 
   if (node.type === "text") {
     const [editing, setEditing] = useState(node.text === "");
     useEffect(() => { if (!selected) setEditing(false); }, [selected]);
     const textareaRef = useRef(null);
     const fontSizes = [12,16,20,28,36,48];
-    const fmBg = boardDark ? "rgba(18,20,38,.95)" : "rgba(250,250,248,.95)";
-    const fmBorder = boardDark ? "rgba(255,255,255,.1)" : "rgba(0,0,0,.1)";
-    const fmActive = boardDark ? "rgba(255,255,255,.18)" : "rgba(0,0,0,.13)";
-    const fmText = boardDark ? "#fff" : "#111";
-    const fmMuted = boardDark ? "rgba(255,255,255,.38)" : "rgba(0,0,0,.35)";
+    const fmBg = "rgba(250,250,248,.97)";
+    const fmBorder = "rgba(0,0,0,.1)";
+    const fmActive = "rgba(0,0,0,.13)";
+    const fmText = "#111";
+    const fmMuted = "rgba(0,0,0,.35)";
     const enterEdit = (e) => { e.stopPropagation(); setEditing(true); setTimeout(() => textareaRef.current?.focus(), 30); };
     return (
-      <div data-node-id={node.id} style={{position:"absolute",left:node.x,top:node.y}} onClick={onClick}>
-        {delBtn}
-        {dragHandle}
+      <div data-node-id={node.id} style={{position:"absolute",left:node.x,top:node.y,cursor:isSelect?"grab":"text"}}
+        onPointerDown={(e)=>{
+          if (!isSelect) return;
+          if (editing && e.target.tagName === "TEXTAREA") return;
+          if (e.target.tagName === "BUTTON" || e.target.tagName === "INPUT") return;
+          onDragStart(e);
+        }}
+        onClick={onClick}>
+        {selHandles}
         {selected && (
-          <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-54,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:10,padding:"4px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.3)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:20,overflowX:"auto",maxWidth:"90vw"}}>
-            <button onClick={()=>onUpdate({bold:!node.bold})} style={{fontWeight:"bold",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.bold?fmActive:"transparent",color:node.bold?fmText:fmMuted,flexShrink:0}}>B</button>
-            <button onClick={()=>onUpdate({italic:!node.italic})} style={{fontStyle:"italic",fontSize:13,width:26,height:26,border:"none",borderRadius:6,cursor:"pointer",background:node.italic?fmActive:"transparent",color:node.italic?fmText:fmMuted,flexShrink:0}}>I</button>
+          <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-52,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:12,padding:"5px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.22)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:30,overflowX:"auto",maxWidth:"90vw"}}>
+            <button onClick={()=>onUpdate({bold:!node.bold})} style={{fontWeight:"bold",fontSize:13,width:28,height:28,border:"none",borderRadius:7,cursor:"pointer",background:node.bold?fmActive:"transparent",color:node.bold?fmText:fmMuted,flexShrink:0}}>B</button>
+            <button onClick={()=>onUpdate({italic:!node.italic})} style={{fontStyle:"italic",fontSize:13,width:28,height:28,border:"none",borderRadius:7,cursor:"pointer",background:node.italic?fmActive:"transparent",color:node.italic?fmText:fmMuted,flexShrink:0}}>I</button>
             <div style={{width:1,height:16,background:fmBorder,margin:"0 2px",flexShrink:0}}/>
             {fontSizes.map(s=>(
-              <button key={s} onClick={()=>onUpdate({fontSize:s})} style={{fontSize:9,width:24,height:22,border:"none",borderRadius:5,cursor:"pointer",fontWeight:700,background:node.fontSize===s?fmActive:"transparent",color:node.fontSize===s?fmText:fmMuted,flexShrink:0}}>
+              <button key={s} onClick={()=>onUpdate({fontSize:s})} style={{fontSize:9,width:26,height:24,border:"none",borderRadius:6,cursor:"pointer",fontWeight:700,background:node.fontSize===s?fmActive:"transparent",color:node.fontSize===s?fmText:fmMuted,flexShrink:0}}>
                 {s<=12?"Xs":s<=16?"S":s<=20?"M":s<=28?"L":s<=36?"XL":"2X"}
               </button>
             ))}
             <div style={{width:1,height:16,background:fmBorder,margin:"0 2px",flexShrink:0}}/>
-            {["#ffffff","#111111","#1768FF","#FF3B30","#34C759","#FF9500","#FFCC00","#AF52DE","#FF2D55"].map(c=>(
+            {["#111111","#ffffff","#1768FF","#FF3B30","#34C759","#FF9500","#FFCC00","#AF52DE","#FF2D55"].map(c=>(
               <button key={c} onClick={()=>onUpdate({color:c})}
-                style={{width:18,height:18,borderRadius:"50%",background:c,border:(node.color||"#ffffff")===c?`2px solid ${fmText}`:"1.5px solid rgba(128,128,128,.3)",cursor:"pointer",flexShrink:0,boxShadow:c==="#ffffff"?"inset 0 0 0 1px rgba(0,0,0,.2)":"none"}} />
+                style={{width:18,height:18,borderRadius:"50%",background:c,border:(node.color||"#111111")===c?`2.5px solid #1768FF`:"1.5px solid rgba(128,128,128,.3)",cursor:"pointer",flexShrink:0,boxShadow:c==="#ffffff"?"inset 0 0 0 1px rgba(0,0,0,.2)":"none"}} />
             ))}
             <div style={{width:1,height:16,background:fmBorder,margin:"0 2px",flexShrink:0}}/>
             <button onPointerDown={e=>e.stopPropagation()} onClick={enterEdit}
-              style={{fontSize:9,height:22,padding:"0 8px",border:"none",borderRadius:6,cursor:"pointer",fontWeight:700,background:editing?fmActive:"transparent",color:editing?fmText:fmMuted,flexShrink:0,whiteSpace:"nowrap"}}>
+              style={{fontSize:10,height:24,padding:"0 10px",border:`1px solid ${fmBorder}`,borderRadius:7,cursor:"pointer",fontWeight:700,background:editing?fmActive:"transparent",color:editing?"#1768FF":fmMuted,flexShrink:0,whiteSpace:"nowrap"}}>
               {editing ? "✓ Done" : "Edit"}
             </button>
           </div>
         )}
-        {/* Tap-to-select overlay shown when NOT editing */}
+        {/* Tap-to-select overlay when not editing */}
         {!editing && (
           <div onPointerDown={e=>e.stopPropagation()} onDoubleClick={enterEdit}
-            style={{position:"absolute",inset:0,cursor:isSelect?"default":"text",zIndex:5,borderRadius:4,
-              outline:selected?"2px solid rgba(23,104,255,.4)":"none"}} />
+            style={{position:"absolute",inset:0,cursor:isSelect?"default":"text",zIndex:5,borderRadius:4}} />
         )}
         <textarea
           ref={textareaRef}
@@ -1601,7 +1613,7 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
             cursor: editing ? "text" : "default",
             width:node.w||200, minWidth:80, minHeight:30,
             fontSize:node.fontSize||16,
-            color:node.color||(boardDark?"#fff":"#111"),
+            color:node.color||"#111111",
             fontWeight:node.bold?"bold":"normal",
             fontStyle:node.italic?"italic":"normal",
             pointerEvents: editing ? "auto" : "none",
@@ -1613,16 +1625,15 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
 
   if (node.type === "note") return (
     <div data-node-id={node.id} style={{...baseStyle, width:node.w||200, minHeight:130, background:node.color||"#FFF176", display:"flex", flexDirection:"column"}}
-      onClick={onClick}>
-      {delBtn}
-      {dragHandle}
+      onPointerDown={onDown} onClick={onClick}>
+      {selHandles}
       <textarea value={node.text} onChange={e=>onUpdate({text:e.target.value})}
         onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onSelect();}}
         placeholder="Type something…"
-        style={{flex:1,background:"transparent",border:"none",outline:"none",padding:"4px 16px 14px",fontSize:13,lineHeight:1.65,color:"#333",resize:"none",fontFamily:"inherit",minHeight:100,borderRadius:16}} />
+        style={{flex:1,background:"transparent",border:"none",outline:"none",padding:"14px 16px 10px",fontSize:13,lineHeight:1.65,color:"#333",resize:"none",fontFamily:"inherit",minHeight:100,borderRadius:16}} />
       {selected && <div style={{padding:"4px 12px 10px",display:"flex",gap:6}}>
         {noteColors.map(c=><button key={c} onPointerDown={e=>e.stopPropagation()} onClick={()=>onUpdate({color:c})}
-          style={{width:18,height:18,borderRadius:"50%",background:c,border:node.color===c?"2.5px solid #333":"1.5px solid rgba(0,0,0,.18)",cursor:"pointer"}} />)}
+          style={{width:20,height:20,borderRadius:"50%",background:c,border:node.color===c?"2.5px solid #1768FF":"1.5px solid rgba(0,0,0,.18)",cursor:"pointer"}} />)}
       </div>}
     </div>
   );
@@ -1640,24 +1651,23 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
     };
     return (
     <div data-node-id={node.id} style={{...baseStyle, width:node.w||240, background:"#fff", overflow:"hidden"}}
-      onClick={onClick}>
-      {delBtn}
-      {dragHandle}
+      onPointerDown={onDown} onClick={onClick}>
+      {selHandles}
       {isSong && <audio ref={boardAudioRef} src={item.url} onEnded={()=>setAudioPlaying(false)} style={{display:"none"}} />}
       {item.type==="image" && item.url && <img src={item.url} alt={item.title} style={{width:"100%",height:120,objectFit:"cover",display:"block",pointerEvents:"none"}} />}
-      <div style={{padding:"8px 12px 10px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
+      <div style={{padding:"10px 12px 12px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
           {isSong && (
             <button onPointerDown={e=>e.stopPropagation()} onClick={toggleAudio}
-              style={{width:30,height:30,borderRadius:"50%",background:"#1768FF",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 2px 8px rgba(23,104,255,.4)"}}>
+              style={{width:34,height:34,borderRadius:"50%",background:"#1768FF",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 2px 10px rgba(23,104,255,.45)"}}>
               {audioPlaying
-                ? <span style={{width:8,height:8,display:"flex",gap:2}}><span style={{width:3,height:8,background:"#fff",borderRadius:1}}/><span style={{width:3,height:8,background:"#fff",borderRadius:1}}/></span>
-                : <span style={{width:0,height:0,borderTop:"5px solid transparent",borderBottom:"5px solid transparent",borderLeft:"8px solid #fff",marginLeft:2}}/>}
+                ? <span style={{width:10,height:10,display:"flex",gap:2.5}}><span style={{width:3,height:10,background:"#fff",borderRadius:1}}/><span style={{width:3,height:10,background:"#fff",borderRadius:1}}/></span>
+                : <span style={{width:0,height:0,borderTop:"6px solid transparent",borderBottom:"6px solid transparent",borderLeft:"10px solid #fff",marginLeft:2}}/>}
             </button>
           )}
           <div style={{minWidth:0,flex:1}}>
             <p style={{fontSize:12,fontWeight:700,color:"#111",margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</p>
-            {item.note && <p style={{fontSize:10,color:"#666",margin:"2px 0 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.note.slice(0,60)}</p>}
+            {item.note && <p style={{fontSize:10,color:"#666",margin:"3px 0 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.note.slice(0,60)}</p>}
           </div>
         </div>
       </div>
@@ -1730,6 +1740,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const [currentDraw, setCurrentDraw] = useState(null);
   const [lineStart, setLineStart] = useState(null);
   const [linePreview, setLinePreview] = useState(null);
+  const [penType, setPenType] = useState("pen"); // "pen" | "marker" | "pencil" | "line"
   const containerRef = useRef(null);
   // Per-pointer tracking for proper pinch-to-zoom
   const pointersRef = useRef(new Map()); // pointerId → {x,y}
@@ -1743,6 +1754,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const toolRef = useRef("select");
   const drawColorRef = useRef("#1768FF");
   const drawWidthRef = useRef(3);
+  const penTypeRef = useRef("pen");
 
   useEffect(() => { panningRef.current = panning; }, [panning]);
   useEffect(() => { draggingRef.current = dragging; }, [dragging]);
@@ -1750,6 +1762,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { drawColorRef.current = drawColor; }, [drawColor]);
   useEffect(() => { drawWidthRef.current = drawWidth; }, [drawWidth]);
+  useEffect(() => { penTypeRef.current = penType; }, [penType]);
   // Debounce saves — don't write to storage on every pointer-move frame
   const saveTimerRef = useRef(null);
   useEffect(() => {
@@ -1827,12 +1840,15 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     } else if (t_==="text") {
       addText(x,y); setTool("select"); toolRef.current="select";
     } else if (t_==="draw") {
-      setCurrentDraw({id:Date.now(),type:"drawing",points:[{x,y}],color:drawColorRef.current,width:drawWidthRef.current});
+      const pt = penTypeRef.current;
+      if (pt === "line") {
+        const ls = {x,y};
+        setLineStart(ls); lineStartRef.current = ls; setLinePreview({x,y});
+      } else {
+        setCurrentDraw({id:Date.now(),type:"drawing",points:[{x,y}],color:drawColorRef.current,width:drawWidthRef.current,penType:penTypeRef.current});
+      }
     } else if (t_==="erase") {
       erasingRef.current = true; eraseAt(x,y);
-    } else if (t_==="line") {
-      const ls = {x,y};
-      setLineStart(ls); lineStartRef.current = ls; setLinePreview({x,y});
     }
   };
 
@@ -1873,9 +1889,14 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
       const el = document.querySelector(`[data-node-id="${drag.id}"]`);
       if (el) { el.style.left = newX + "px"; el.style.top = newY + "px"; }
     }
-    if (toolRef.current==="draw") setCurrentDraw(d=>d?{...d,points:[...d.points,{x,y}]}:d);
+    if (toolRef.current==="draw") {
+      if (penTypeRef.current === "line") {
+        if (lineStartRef.current) setLinePreview({x,y});
+      } else {
+        setCurrentDraw(d=>d?{...d,points:[...d.points,{x,y}]}:d);
+      }
+    }
     if (toolRef.current==="erase"&&erasingRef.current) eraseAt(x,y);
-    if (toolRef.current==="line"&&lineStartRef.current) setLinePreview({x,y});
   };
 
   const onPtrUp = (e) => {
@@ -1888,7 +1909,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     setCurrentDraw(d => { if(d && d.points.length>1) setNodes(n=>[...n,d]); return null; });
     if (lineStartRef.current && linePreview) {
       const ls = lineStartRef.current;
-      setNodes(n=>[...n,{id:Date.now(),type:"line",x1:ls.x,y1:ls.y,x2:linePreview.x,y2:linePreview.y,color:drawColorRef.current,width:drawWidthRef.current}]);
+      setNodes(n=>[...n,{id:Date.now(),type:"line",x1:ls.x,y1:ls.y,x2:linePreview.x,y2:linePreview.y,color:drawColorRef.current,width:drawWidthRef.current,penType:penTypeRef.current}]);
     }
     setLineStart(null); lineStartRef.current=null; setLinePreview(null);
     erasingRef.current=false;
@@ -1928,19 +1949,9 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const tbMuted = boardDark?"rgba(255,255,255,.38)":"rgba(0,0,0,.38)";
   const tbGroupBg = boardDark?"rgba(255,255,255,.07)":"rgba(0,0,0,.06)";
   const tbActive = boardDark?"rgba(255,255,255,.2)":"rgba(0,0,0,.14)";
-  const btnBase = {border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background .12s, opacity .12s",minHeight:44,minWidth:44};
-
-  const tools = [
-    ["select", <><path d="M5 3l14 9-7 1-4 6-3-16z"/></>, "Select"],
-    ["text",   <><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></>, "Text"],
-    ["draw",   <><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></>, "Draw"],
-    ["erase",  <><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></>, "Erase"],
-    ["line",   <><line x1="5" y1="19" x2="19" y2="5"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/></>, "Line"],
-  ];
-
   const drawNodes = nodes.filter(n=>n.type==="drawing"||n.type==="line");
   const htmlNodes = nodes.filter(n=>n.type!=="drawing"&&n.type!=="line");
-  const cursor = tool==="draw"||tool==="line"?"crosshair":tool==="erase"?"cell":tool==="text"?"text":panning?"grabbing":"default";
+  const cursor = tool==="draw"?"crosshair":tool==="erase"?"cell":tool==="text"?"text":panning?"grabbing":"default";
 
   return (
     <>
@@ -1957,23 +1968,40 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
           <rect width="100%" height="100%" fill="url(#bdots)"/>
         </svg>
 
-        <div style={{position:"absolute",top:"max(16px, calc(env(safe-area-inset-top) + 8px))",left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:700,color:"rgba(255,255,255,.28)",letterSpacing:"0.12em",textTransform:"uppercase",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
+        <div style={{position:"absolute",top:"max(16px, calc(env(safe-area-inset-top) + 8px))",left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:700,color:"rgba(0,0,0,.32)",letterSpacing:"0.12em",textTransform:"uppercase",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
         {nodes.length === 0 && (
           <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",textAlign:"center",pointerEvents:"none",userSelect:"none"}}>
-            <div style={{fontSize:36,opacity:.15,marginBottom:12}}>✦</div>
-            <p style={{fontSize:13,color:"rgba(255,255,255,.22)",fontWeight:600,margin:"0 0 4px"}}>Empty canvas</p>
-            <p style={{fontSize:11,color:"rgba(255,255,255,.14)",margin:0}}>Use the toolbar below to add notes, text, or drawings</p>
+            <div style={{fontSize:36,opacity:.12,marginBottom:12,color:"#000"}}>✦</div>
+            <p style={{fontSize:13,color:"rgba(0,0,0,.22)",fontWeight:600,margin:"0 0 4px"}}>Empty canvas</p>
+            <p style={{fontSize:11,color:"rgba(0,0,0,.15)",margin:0}}>Use the toolbar below to add notes, text, or drawings</p>
           </div>
         )}
 
         <div style={{position:"absolute",inset:0,overflow:"visible",pointerEvents:"none"}}>
           <div style={{position:"absolute",left:0,top:0,transform:`translate(${offset.x}px,${offset.y}px) scale(${scale})`,transformOrigin:"0 0",pointerEvents:"none",willChange:"transform"}}>
             <svg style={{position:"absolute",left:0,top:0,overflow:"visible",width:1,height:1,pointerEvents:"none"}}>
-              {drawNodes.map(nd=>nd.type==="drawing"
-                ? <polyline key={nd.id} points={nd.points.map(p=>`${p.x},${p.y}`).join(" ")} stroke={nd.color} strokeWidth={nd.width} fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                : <line key={nd.id} x1={nd.x1} y1={nd.y1} x2={nd.x2} y2={nd.y2} stroke={nd.color} strokeWidth={nd.width} strokeLinecap="round"/>
-              )}
-              {currentDraw&&<polyline points={currentDraw.points.map(p=>`${p.x},${p.y}`).join(" ")} stroke={currentDraw.color} strokeWidth={currentDraw.width} fill="none" strokeLinecap="round" strokeLinejoin="round"/>}
+              {drawNodes.map(nd=>{
+                const pt = nd.penType || "pen";
+                const isMarker = pt === "marker";
+                const isPencil = pt === "pencil";
+                const opacity = isMarker ? 0.58 : isPencil ? 0.72 : 1;
+                const sw = isMarker ? nd.width * 2.2 : isPencil ? nd.width * 0.75 : nd.width;
+                const cap = isMarker ? "square" : "round";
+                const dash = isPencil ? "1 0.4" : "none";
+                return nd.type==="drawing"
+                  ? <polyline key={nd.id} points={nd.points.map(p=>`${p.x},${p.y}`).join(" ")} stroke={nd.color} strokeWidth={sw} fill="none" strokeLinecap={cap} strokeLinejoin={isMarker?"miter":"round"} opacity={opacity} strokeDasharray={dash}/>
+                  : <line key={nd.id} x1={nd.x1} y1={nd.y1} x2={nd.x2} y2={nd.y2} stroke={nd.color} strokeWidth={sw} strokeLinecap={cap} opacity={opacity}/>;
+              })}
+              {currentDraw&&(()=>{
+                const pt = currentDraw.penType || "pen";
+                const isMarker = pt === "marker";
+                const isPencil = pt === "pencil";
+                const opacity = isMarker ? 0.58 : isPencil ? 0.72 : 1;
+                const sw = isMarker ? currentDraw.width * 2.2 : isPencil ? currentDraw.width * 0.75 : currentDraw.width;
+                const cap = isMarker ? "square" : "round";
+                const dash = isPencil ? "1 0.4" : "none";
+                return <polyline points={currentDraw.points.map(p=>`${p.x},${p.y}`).join(" ")} stroke={currentDraw.color} strokeWidth={sw} fill="none" strokeLinecap={cap} strokeLinejoin={isMarker?"miter":"round"} opacity={opacity} strokeDasharray={dash}/>;
+              })()}
               {lineStart&&linePreview&&<line x1={lineStart.x} y1={lineStart.y} x2={linePreview.x} y2={linePreview.y} stroke={drawColor} strokeWidth={drawWidth} strokeLinecap="round" strokeDasharray="6,4" opacity={0.7}/>}
             </svg>
             <div style={{pointerEvents:"all"}}>
@@ -1994,7 +2022,7 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
         </div>
 
         {showVaultPicker&&(
-          <div style={{position:"absolute",bottom:"calc(144px + env(safe-area-inset-bottom))",left:"50%",transform:"translateX(-50%)",width:300,maxHeight:240,overflowY:"auto",background:t.panel,boxShadow:t.shadow,border:`1px solid ${t.border}`,borderRadius:20,padding:10,zIndex:60}}
+          <div style={{position:"absolute",bottom:"calc(88px + env(safe-area-inset-bottom))",left:"50%",transform:"translateX(-50%)",width:300,maxHeight:260,overflowY:"auto",background:t.panel,boxShadow:t.shadow,border:`1px solid ${t.border}`,borderRadius:20,padding:10,zIndex:60}}
             onPointerDown={e=>e.stopPropagation()}>
             <p style={{fontSize:10,fontWeight:700,letterSpacing:"0.15em",textTransform:"uppercase",color:t.muted,padding:"4px 8px 8px"}}>From vault</p>
             {vaultItems.length===0&&<p style={{fontSize:12,color:t.muted,textAlign:"center",padding:"12px 0"}}>No vault items yet</p>}
@@ -2012,60 +2040,113 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
         {showColorPicker&&<ColorPicker color={drawColor} onChange={setDrawColor} strokeWidth={drawWidth} onWidthChange={setDrawWidth} onClose={()=>setShowColorPicker(false)} boardDark={boardDark}/>}
       </div>
 
-      {/* Two-row mobile-friendly toolbar */}
-      <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,background:tbBg,backdropFilter:"blur(24px)",borderTop:`1px solid ${tbBorder}`,paddingBottom:"env(safe-area-inset-bottom)"}}
+      {/* Freeform-style single-row contextual toolbar */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,background:tbBg,backdropFilter:"blur(28px)",WebkitBackdropFilter:"blur(28px)",borderTop:`1px solid ${tbBorder}`,paddingBottom:"env(safe-area-inset-bottom)"}}
         onPointerDown={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",padding:"10px 14px 12px",gap:10,minHeight:60}}>
 
-        {/* Row 1 — tool picker as a centred segmented pill */}
-        <div style={{display:"flex",justifyContent:"center",padding:"10px 12px 5px"}}>
-          <div style={{display:"flex",background:tbGroupBg,borderRadius:16,padding:4,gap:2}}>
-            {tools.map(([id, svgContent, label])=>(
-              <button key={id} onClick={()=>{setTool(id);setShowColorPicker(false);setShowVaultPicker(false);}}
-                style={{...btnBase,flexDirection:"column",gap:3,padding:"7px 10px",minWidth:54,background:tool===id?tbActive:"transparent",borderRadius:12,
-                  color:tool===id?tbText:tbMuted,boxShadow:tool===id?`inset 0 0 0 1px ${boardDark?"rgba(255,255,255,.12)":"rgba(0,0,0,.1)"}`:"none"}}>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{svgContent}</svg>
-                <span style={{fontSize:9,fontWeight:700,letterSpacing:"0.04em",textTransform:"uppercase",lineHeight:1}}>{label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Row 2 — utility actions */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"3px 10px 14px",gap:4}}>
-
-          {/* Left: back */}
+          {/* Left: Back button */}
           <button onClick={onClose}
-            style={{...btnBase,gap:5,padding:"9px 14px",background:tbGroupBg,borderRadius:12,color:tbMuted,fontSize:12,fontWeight:600}}>
-            <ChevronLeft className="h-4 w-4"/> Back
+            style={{width:40,height:40,background:tbGroupBg,border:"none",borderRadius:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:tbText}}>
+            <ChevronLeft style={{width:20,height:20}}/>
           </button>
 
-          {/* Centre: add, colour, delete */}
-          <div style={{display:"flex",alignItems:"center",gap:5}}>
-            <button onClick={addNote} title="Sticky note"
-              style={{...btnBase,padding:"9px 11px",background:tbGroupBg,borderRadius:12,color:tbText}}>
-              <FileText className="h-[1.05rem] w-[1.05rem]"/>
-            </button>
-            <button onClick={()=>{setShowVaultPicker(v=>!v);setShowColorPicker(false);}} title="Add from vault"
-              style={{...btnBase,padding:"9px 11px",background:showVaultPicker?tbActive:tbGroupBg,borderRadius:12,color:tbText}}>
-              <Plus className="h-[1.05rem] w-[1.05rem]"/>
-            </button>
-            <button onClick={()=>{setShowColorPicker(v=>!v);setShowVaultPicker(false);}} title="Colour & stroke"
-              style={{...btnBase,padding:"9px 11px",background:showColorPicker?tbActive:tbGroupBg,borderRadius:12}}>
-              <div style={{width:22,height:22,borderRadius:"50%",background:drawColor,border:`2.5px solid ${boardDark?"rgba(255,255,255,.3)":"rgba(0,0,0,.2)"}`}}/>
-            </button>
-            <button onClick={deleteSelected} disabled={!selectedId}
-              style={{...btnBase,padding:"9px 11px",background:selectedId?"rgba(255,70,70,.15)":tbGroupBg,borderRadius:12,color:selectedId?"#ff5555":tbMuted,opacity:selectedId?1:0.45}}>
-              <Trash2 className="h-[1.05rem] w-[1.05rem]"/>
-            </button>
+          {/* Center: context-sensitive */}
+          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            {(tool === "draw" || tool === "erase") ? (
+              // ── Draw mode toolbar ──────────────────────────────────────────────
+              <>
+                {/* Pen type pills */}
+                <div style={{display:"flex",background:tbGroupBg,borderRadius:13,padding:3,gap:1}}>
+                  {[
+                    ["pen", <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>],
+                    ["marker", <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M9 11 4.5 15.5a2 2 0 0 0 3 3L12 14"/><path d="m14.5 3 6.5 6.5-10 10-7-7Z"/></svg>],
+                    ["pencil", <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 5 4 4"/><path d="M13 7 8.7 2.7a2.72 2.72 0 0 0-3.86 0L2.7 4.86A2.72 2.72 0 0 0 2.7 8.72L7 13"/><path d="M8 6l2 2"/><path d="m2 22 5.5-1.5L21 7a2.12 2.12 0 0 0-3-3L4.5 17.5Z"/></svg>],
+                    ["line", <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="19" x2="19" y2="5"/><circle cx="19" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/></svg>],
+                  ].map(([type, icon]) => (
+                    <button key={type} onClick={()=>{setPenType(type);penTypeRef.current=type;if(tool==="erase"){setTool("draw");toolRef.current="draw";}}}
+                      style={{width:38,height:34,background:penType===type&&tool!=="erase"?tbActive:"transparent",borderRadius:10,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:penType===type&&tool!=="erase"?tbText:tbMuted,transition:"background .12s,color .12s"}}>
+                      {icon}
+                    </button>
+                  ))}
+                </div>
+                {/* Stroke widths */}
+                <div style={{display:"flex",background:tbGroupBg,borderRadius:13,padding:3,gap:1}}>
+                  {[2,5,9].map(w=>(
+                    <button key={w} onClick={()=>{setDrawWidth(w);drawWidthRef.current=w;}}
+                      style={{width:38,height:34,background:drawWidth===w?tbActive:"transparent",borderRadius:10,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"background .12s"}}>
+                      <div style={{width:22,height:Math.max(1.5,Math.min(w*.6,7)),borderRadius:99,background:drawWidth===w?drawColor:tbMuted,transition:"background .12s"}}/>
+                    </button>
+                  ))}
+                </div>
+                {/* Color dot */}
+                <button onClick={()=>{setShowColorPicker(v=>!v);}}
+                  style={{width:40,height:40,background:showColorPicker?tbActive:tbGroupBg,borderRadius:13,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"background .12s"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:drawColor,border:"2.5px solid rgba(0,0,0,.15)",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
+                </button>
+                {/* Erase toggle */}
+                <button onClick={()=>{const next=tool==="erase"?"draw":"erase";setTool(next);toolRef.current=next;}}
+                  style={{width:40,height:40,background:tool==="erase"?"rgba(255,59,48,.12)":tbGroupBg,borderRadius:13,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tool==="erase"?"#FF3B30":tbMuted,transition:"background .12s,color .12s"}}>
+                  <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/></svg>
+                </button>
+              </>
+            ) : selectedId ? (
+              // ── Node selected toolbar ──────────────────────────────────────────
+              <>
+                <button onPointerDown={e=>e.stopPropagation()} onClick={()=>{
+                  const nd = nodes.find(n=>n.id===selectedId);
+                  if(!nd) return;
+                  const clone = {...nd, id:Date.now(), x:nd.x+24, y:nd.y+24};
+                  setNodes(n=>[...n,clone]);
+                }}
+                  style={{height:40,padding:"0 16px",background:tbGroupBg,border:"none",borderRadius:13,cursor:"pointer",display:"flex",alignItems:"center",gap:7,color:tbText,fontWeight:600,fontSize:13}}>
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  Duplicate
+                </button>
+                <button onPointerDown={e=>e.stopPropagation()} onClick={()=>{setNodes(n=>n.filter(nd=>nd.id!==selectedId));setSelectedId(null);}}
+                  style={{height:40,padding:"0 16px",background:"rgba(255,59,48,.1)",border:"none",borderRadius:13,cursor:"pointer",display:"flex",alignItems:"center",gap:7,color:"#FF3B30",fontWeight:600,fontSize:13}}>
+                  <Trash2 style={{width:17,height:17}}/> Delete
+                </button>
+              </>
+            ) : (
+              // ── Default toolbar: add tools ─────────────────────────────────────
+              <>
+                {/* Sticky note */}
+                <button onClick={addNote}
+                  style={{width:48,height:48,background:tbGroupBg,border:"none",borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText}}>
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </button>
+                {/* Pen/Draw */}
+                <button onClick={()=>{setTool("draw");toolRef.current="draw";setShowColorPicker(false);setShowVaultPicker(false);}}
+                  style={{width:48,height:48,background:tbGroupBg,border:"none",borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText}}>
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                </button>
+                {/* Text */}
+                <button onClick={()=>{setTool("text");toolRef.current="text";setShowColorPicker(false);setShowVaultPicker(false);}}
+                  style={{width:48,height:48,background:tbGroupBg,border:"none",borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText,fontSize:18,fontWeight:800,fontFamily:"Georgia,serif",letterSpacing:"-0.02em",lineHeight:1}}>
+                  Aa
+                </button>
+                {/* Vault attachment */}
+                <button onClick={()=>{setShowVaultPicker(v=>!v);setShowColorPicker(false);}}
+                  style={{width:48,height:48,background:showVaultPicker?tbActive:tbGroupBg,border:"none",borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:showVaultPicker?"#1768FF":tbText,transition:"background .12s,color .12s"}}>
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+              </>
+            )}
           </div>
 
-          {/* Right: zoom reset */}
-          <div style={{display:"flex",alignItems:"center",gap:5}}>
-            <button onClick={()=>{setOffset({x:0,y:0});setScale(1);}} title="Reset view"
-              style={{...btnBase,padding:"9px 14px",background:tbGroupBg,borderRadius:12,color:tbMuted,fontSize:10,fontWeight:700}}>
+          {/* Right: Done (draw mode) or zoom% */}
+          {(tool === "draw" || tool === "erase") ? (
+            <button onClick={()=>{setTool("select");toolRef.current="select";setShowColorPicker(false);}}
+              style={{height:40,padding:"0 16px",background:"#1768FF",border:"none",borderRadius:13,cursor:"pointer",color:"#fff",fontSize:13,fontWeight:700,flexShrink:0,boxShadow:"0 2px 10px rgba(23,104,255,.4)"}}>
+              Done
+            </button>
+          ) : (
+            <button onClick={()=>{setOffset({x:0,y:0});setScale(1);}}
+              style={{height:40,padding:"0 11px",background:tbGroupBg,border:"none",borderRadius:13,cursor:"pointer",color:tbMuted,fontSize:11,fontWeight:700,flexShrink:0,minWidth:48}}>
               {Math.round(scale*100)}%
             </button>
-          </div>
+          )}
         </div>
       </div>
     </>
