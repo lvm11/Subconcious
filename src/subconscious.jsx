@@ -221,9 +221,12 @@ async function blobToDataUrl(blob) {
 }
 
 function createIcon(paths) {
-  return function Icon({ className = "" }) {
+  return function Icon({ className = "", style, width, height }) {
+    const sized = width || height || (style && (style.width || style.height));
     return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <svg className={className} style={style}
+        width={width || (sized ? undefined : 18)} height={height || (sized ? undefined : 18)}
+        viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         {paths.map((path, index) => path.type === "circle"
           ? <circle key={index} cx={path.cx} cy={path.cy} r={path.r} />
           : path.type === "rect"
