@@ -3939,6 +3939,18 @@ function QuickMediaVault() {
   const playlistPage = (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
 
+      {/* ── CREATE PLAYLIST ── */}
+      <div style={{display:"flex",gap:8,padding:"4px 0"}}>
+        <input value={newPlaylistName} onChange={e=>setNewPlaylistName(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")createPlaylist();}}
+          placeholder="New playlist name…"
+          style={{flex:1,background:t.input,border:`1px solid ${t.border}`,borderRadius:14,padding:"12px 16px",fontSize:14,color:t.text,outline:"none"}}/>
+        <button onClick={createPlaylist}
+          style={{width:48,height:48,borderRadius:14,border:"none",cursor:"pointer",background:primaryBg,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Plus className="h-5 w-5"/>
+        </button>
+      </div>
+
       {/* ── NOW PLAYING CARD ── */}
       {playingPlaylistId && (() => {
         const pl = playlists.find(p=>p.id===playingPlaylistId);
@@ -4096,18 +4108,6 @@ function QuickMediaVault() {
           </div>
         );
       })()}
-
-      {/* ── CREATE PLAYLIST ── */}
-      <div style={{display:"flex",gap:8,padding:"4px 0"}}>
-        <input value={newPlaylistName} onChange={e=>setNewPlaylistName(e.target.value)}
-          onKeyDown={e=>{if(e.key==="Enter")createPlaylist();}}
-          placeholder="New playlist name…"
-          style={{flex:1,background:t.input,border:`1px solid ${t.border}`,borderRadius:14,padding:"12px 16px",fontSize:14,color:t.text,outline:"none"}}/>
-        <button onClick={createPlaylist}
-          style={{width:48,height:48,borderRadius:14,border:"none",cursor:"pointer",background:primaryBg,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <Plus className="h-5 w-5"/>
-        </button>
-      </div>
 
       {playlists.length===0 && (
         <EmptyState
