@@ -1516,9 +1516,22 @@ function ColorPicker({ color, onChange, strokeWidth, onWidthChange, onClose, boa
   );
 }
 
-function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDragStart, onUpdate, onDelete }) {
+function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDragStart, onUpdate, onResize, scale, onDelete }) {
   const noteColors = ["#FFF176","#A8D8EA","#FFDAC1","#B5EAD7","#C7CEEA","#FFB7B2"];
   const isSelect = tool === "select";
+  const resizeRef = useRef(null);
+
+  // Bottom-right resize handle (width-based; height stays auto for media/text)
+  const resizeHandle = selected ? (
+    <div
+      onPointerDown={(e)=>{ e.stopPropagation(); try{e.currentTarget.setPointerCapture(e.pointerId);}catch{} resizeRef.current={x:e.clientX,w:node.w||220}; }}
+      onPointerMove={(e)=>{ const R=resizeRef.current; if(!R) return; e.stopPropagation(); onResize&&onResize(Math.max(90, R.w+(e.clientX-R.x)/(scale||1))); }}
+      onPointerUp={(e)=>{ e.stopPropagation(); resizeRef.current=null; }}
+      onPointerCancel={(e)=>{ e.stopPropagation(); resizeRef.current=null; }}
+      style={{position:"absolute",bottom:-13,right:-13,width:26,height:26,borderRadius:"50%",background:"#1768FF",border:"2.5px solid #fff",boxShadow:"0 2px 6px rgba(23,104,255,.5)",cursor:"nwse-resize",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",zIndex:25}}>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><path d="M9 21H3v-6M21 3l-7.5 7.5M3 21l7.5-7.5M15 3h6v6"/></svg>
+    </div>
+  ) : null;
 
   // Freeform-style: drag from anywhere on the node (not just a handle strip)
   const onDown = (e) => {
@@ -1573,6 +1586,7 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
         }}
         onClick={onClick}>
         {selHandles}
+        {resizeHandle}
         {selected && (
           <div onPointerDown={e=>e.stopPropagation()} style={{position:"absolute",top:-52,left:0,display:"flex",gap:3,alignItems:"center",background:fmBg,borderRadius:12,padding:"5px 8px",boxShadow:"0 4px 20px rgba(0,0,0,.22)",border:`1px solid ${fmBorder}`,whiteSpace:"nowrap",zIndex:30,overflowX:"auto",maxWidth:"90vw"}}>
             <button onClick={()=>onUpdate({bold:!node.bold})} style={{fontWeight:"bold",fontSize:13,width:28,height:28,border:"none",borderRadius:7,cursor:"pointer",background:node.bold?fmActive:"transparent",color:node.bold?fmText:fmMuted,flexShrink:0}}>B</button>
@@ -1627,6 +1641,7 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
     <div data-node-id={node.id} style={{...baseStyle, width:node.w||200, minHeight:130, background:node.color||"#FFF176", display:"flex", flexDirection:"column"}}
       onPointerDown={onDown} onClick={onClick}>
       {selHandles}
+      {resizeHandle}
       <textarea value={node.text} onChange={e=>onUpdate({text:e.target.value})}
         onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onSelect();}}
         placeholder="Type something…"
@@ -1653,8 +1668,10 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
     <div data-node-id={node.id} style={{...baseStyle, width:node.w||240, background:"#fff", overflow:"hidden"}}
       onPointerDown={onDown} onClick={onClick}>
       {selHandles}
+      {resizeHandle}
       {isSong && <audio ref={boardAudioRef} src={item.url} onEnded={()=>setAudioPlaying(false)} style={{display:"none"}} />}
-      {item.type==="image" && item.url && <img src={item.url} alt={item.title} style={{width:"100%",height:120,objectFit:"cover",display:"block",pointerEvents:"none"}} />}
+      {item.type==="image" && item.url && <img src={item.url} alt={item.title} style={{width:"100%",height:"auto",maxHeight:520,objectFit:"cover",display:"block",pointerEvents:"none"}} />}
+      {item.type==="video" && item.url && <video src={item.url} controls playsInline onPointerDown={e=>e.stopPropagation()} style={{width:"100%",height:"auto",maxHeight:520,display:"block",background:"#000"}} />}
       <div style={{padding:"10px 12px 12px"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           {isSong && (
@@ -1676,40 +1693,118 @@ function CanvasNode({ node, selected, t, theme, boardDark, tool, onSelect, onDra
   return null;
 }
 
-function CreativeSessions({ t, theme, sessions, onOpen, onCreate, onDelete, onRename }) {
+// Selection + move/resize overlay for vector nodes (drawings & lines)
+function VecOverlay({ node, scale, bbox, onTranslate, onScale, onDelete }) {
+  const bb = bbox(node);
+  const pad = 14; // grab padding so thin lines are easy to hit
+  const x = bb.x - pad, y = bb.y - pad, w = bb.w + pad * 2, h = bb.h + pad * 2;
+  const lastRef = useRef(null);
+  const moveDown = (e) => {
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    lastRef.current = { x: e.clientX, y: e.clientY, mode: "move" };
+  };
+  const sizeDown = (e) => {
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    lastRef.current = { x: e.clientX, y: e.clientY, mode: "scale" };
+  };
+  const onMove = (e) => {
+    const L = lastRef.current; if (!L) return;
+    e.stopPropagation();
+    const dx = (e.clientX - L.x) / scale, dy = (e.clientY - L.y) / scale;
+    if (L.mode === "move") onTranslate(node.id, dx, dy);
+    else {
+      const diag = Math.hypot(bb.w, bb.h) || 1;
+      const f = Math.max(0.2, 1 + (dx + dy) / diag);
+      onScale(node.id, bb.x, bb.y, f);
+    }
+    lastRef.current = { ...L, x: e.clientX, y: e.clientY };
+  };
+  const onUp = (e) => { e.stopPropagation(); lastRef.current = null; };
+  return (
+    <div style={{position:"absolute",left:x,top:y,width:w,height:h,zIndex:14,touchAction:"none",cursor:"move"}}
+      onPointerDown={moveDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+      <div style={{position:"absolute",inset:0,border:"2px dashed #1768FF",borderRadius:6,background:"rgba(23,104,255,.05)"}}/>
+      {[{top:-6,left:-6},{top:-6,right:-6},{bottom:-6,left:-6}].map((p,i)=>(
+        <div key={i} style={{position:"absolute",...p,width:11,height:11,borderRadius:"50%",background:"#1768FF",border:"2.5px solid #fff",boxShadow:"0 1px 5px rgba(23,104,255,.45)"}}/>
+      ))}
+      {/* bottom-right = resize handle */}
+      <div onPointerDown={sizeDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+        style={{position:"absolute",bottom:-13,right:-13,width:26,height:26,borderRadius:"50%",background:"#1768FF",border:"2.5px solid #fff",boxShadow:"0 2px 6px rgba(23,104,255,.5)",cursor:"nwse-resize",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none"}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><path d="M9 21H3v-6M21 3l-7.5 7.5M3 21l7.5-7.5M15 3h6v6"/></svg>
+      </div>
+      <button onPointerDown={e=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();onDelete(node.id);}}
+        style={{position:"absolute",top:-15,right:-15,width:26,height:26,background:"#FF3B30",color:"#fff",border:"2.5px solid #fff",borderRadius:"50%",cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(0,0,0,.3)"}}>×</button>
+    </div>
+  );
+}
+
+const BOARD_ICONS = ["✦","🎬","🎵","🍳","🎨","📷","✈️","💡","📚","🏋️","🌿","🎮","💻","🛋️","👗","🎤"];
+
+function CreativeSessions({ t, theme, sessions, onOpen, onCreate, onDelete, onRename, onSetCover }) {
   const isDark = ["dark","franki","grape"].includes(theme);
   const [renamingId, setRenamingId] = useState(null);
   const [renameVal, setRenameVal] = useState("");
+  const [iconPickerId, setIconPickerId] = useState(null);
 
   const startRename = (s, e) => { e.stopPropagation(); setRenamingId(s.id); setRenameVal(s.name); };
   const commitRename = (id) => { if (renameVal.trim()) onRename(id, renameVal.trim()); setRenamingId(null); };
+  const pickCoverPhoto = async (id, file) => {
+    if (!file) return;
+    const url = await blobToDataUrl(file);
+    onSetCover(id, { cover: url, icon: null });
+    setIconPickerId(null);
+  };
 
   return (
     <div className="space-y-2 pt-1">
       {sessions.map(s => (
-        <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,background:t.panel,border:`1px solid ${t.border}`,borderRadius:14,padding:"10px 12px",boxShadow:t.shadow}}>
-          {/* Thumbnail dot */}
-          <div onClick={() => onOpen(s)} style={{width:36,height:36,borderRadius:10,background:isDark?"rgba(255,255,255,.06)":"rgba(0,0,0,.05)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:"pointer",border:`1px solid ${t.border}`}}>
-            <span style={{fontSize:s.nodes.length>0?10:16,color:t.muted,fontWeight:600}}>{s.nodes.length>0?s.nodes.length:"✦"}</span>
+        <div key={s.id}>
+          <div onClick={() => onOpen(s)}
+            style={{display:"flex",alignItems:"center",gap:10,background:t.panel,border:`1px solid ${t.border}`,borderRadius:14,padding:"10px 12px",boxShadow:t.shadow,cursor:"pointer"}}>
+            {/* Cover — tap to choose icon/photo */}
+            <button onClick={e=>{e.stopPropagation();setIconPickerId(iconPickerId===s.id?null:s.id);}}
+              style={{width:42,height:42,borderRadius:11,background:isDark?"rgba(255,255,255,.06)":"rgba(0,0,0,.05)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:"pointer",border:`1px solid ${t.border}`,overflow:"hidden",padding:0}}>
+              {s.cover
+                ? <img src={s.cover} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                : <span style={{fontSize:20}}>{s.icon || "✦"}</span>}
+            </button>
+            {/* Name / rename */}
+            <div style={{flex:1,minWidth:0}}>
+              {renamingId === s.id ? (
+                <input value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+                  onBlur={()=>commitRename(s.id)}
+                  onKeyDown={e=>{if(e.key==="Enter")commitRename(s.id);if(e.key==="Escape")setRenamingId(null);}}
+                  autoFocus onClick={e=>e.stopPropagation()}
+                  style={{width:"100%",background:"transparent",border:"none",outline:`1px solid ${t.border}`,borderRadius:6,fontSize:13,fontWeight:700,color:t.text,padding:"1px 4px"}} />
+              ) : (
+                <p style={{fontSize:13,fontWeight:700,color:t.text,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
+              )}
+              <p style={{fontSize:10,color:t.muted,margin:"1px 0 0"}}>{s.nodes.length} item{s.nodes.length===1?"":"s"} · {new Date(s.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</p>
+            </div>
+            {/* Actions */}
+            <button onClick={e=>startRename(s,e)} style={{width:30,height:30,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <Pencil style={{width:14,height:14,color:t.muted}} />
+            </button>
+            <button onClick={e=>{e.stopPropagation();onDelete(s.id);}} style={{width:30,height:30,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",fontSize:17,color:"rgba(255,100,100,.7)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>×</button>
           </div>
-          {/* Name / rename */}
-          <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={() => onOpen(s)}>
-            {renamingId === s.id ? (
-              <input value={renameVal} onChange={e=>setRenameVal(e.target.value)}
-                onBlur={()=>commitRename(s.id)}
-                onKeyDown={e=>{if(e.key==="Enter")commitRename(s.id);if(e.key==="Escape")setRenamingId(null);}}
-                autoFocus onClick={e=>e.stopPropagation()}
-                style={{width:"100%",background:"transparent",border:"none",outline:`1px solid ${t.border}`,borderRadius:6,fontSize:13,fontWeight:700,color:t.text,padding:"1px 4px"}} />
-            ) : (
-              <p style={{fontSize:13,fontWeight:700,color:t.text,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</p>
-            )}
-            <p style={{fontSize:10,color:t.muted,margin:"1px 0 0"}}>{new Date(s.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</p>
-          </div>
-          {/* Actions */}
-          <button onClick={e=>startRename(s,e)} style={{width:28,height:28,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <Pencil style={{width:13,height:13,color:t.muted}} />
-          </button>
-          <button onClick={e=>{e.stopPropagation();onDelete(s.id);}} style={{width:28,height:28,background:"transparent",border:"none",borderRadius:8,cursor:"pointer",fontSize:16,color:"rgba(255,100,100,.7)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>×</button>
+          {/* Icon / cover picker */}
+          {iconPickerId === s.id && (
+            <div style={{marginTop:6,background:t.panel,border:`1px solid ${t.border}`,borderRadius:14,padding:12,boxShadow:t.shadow}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:6,marginBottom:10}}>
+                {BOARD_ICONS.map(ic=>(
+                  <button key={ic} onClick={()=>{onSetCover(s.id,{icon:ic,cover:null});setIconPickerId(null);}}
+                    style={{aspectRatio:"1",borderRadius:9,border:`1px solid ${(s.icon===ic&&!s.cover)?t.accent:t.border}`,background:(s.icon===ic&&!s.cover)?t.input:"transparent",cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>{ic}</button>
+                ))}
+              </div>
+              <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,width:"100%",padding:"9px 0",borderRadius:10,border:`1.5px dashed ${t.border}`,cursor:"pointer",fontSize:12,fontWeight:600,color:t.muted}}>
+                <Image style={{width:15,height:15}} /> Upload cover photo
+                <input type="file" accept="image/*" className="hidden"
+                  onChange={e=>{const f=e.target.files?.[0];if(f)pickCoverPhoto(s.id,f);e.target.value="";}} />
+              </label>
+            </div>
+          )}
         </div>
       ))}
       <button onClick={onCreate}
@@ -1734,8 +1829,9 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const [tool, setTool] = useState("select");
   const [drawColor, setDrawColor] = useState("#1768FF");
   const [drawWidth, setDrawWidth] = useState(3);
-  // Board is always white regardless of app theme
-  const boardDark = false;
+  const [bgMode, setBgMode] = useState(() => loadFromStorage("board_bg_" + session.id, "light"));
+  const boardDark = bgMode === "dark";
+  useEffect(() => { saveToStorage("board_bg_" + session.id, bgMode); }, [bgMode]);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [currentDraw, setCurrentDraw] = useState(null);
   const [lineStart, setLineStart] = useState(null);
@@ -1771,6 +1867,54 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     return () => clearTimeout(saveTimerRef.current);
   }, [nodes]);
 
+  // ── Undo / redo history ───────────────────────────────────────────────
+  const historyRef = useRef([session.nodes || []]);
+  const histIdxRef = useRef(0);
+  const skipHistRef = useRef(false);
+  const histTimerRef = useRef(null);
+  const [histVer, setHistVer] = useState(0);
+  useEffect(() => {
+    if (skipHistRef.current) { skipHistRef.current = false; return; }
+    clearTimeout(histTimerRef.current);
+    histTimerRef.current = setTimeout(() => {
+      const h = historyRef.current.slice(0, histIdxRef.current + 1);
+      h.push(nodes);
+      while (h.length > 60) h.shift();
+      historyRef.current = h;
+      histIdxRef.current = h.length - 1;
+      setHistVer(v => v + 1);
+    }, 350);
+    return () => clearTimeout(histTimerRef.current);
+  }, [nodes]);
+  const undo = () => {
+    if (histIdxRef.current <= 0) return;
+    histIdxRef.current--; skipHistRef.current = true;
+    setNodes(historyRef.current[histIdxRef.current]); setSelectedId(null); setHistVer(v => v + 1);
+  };
+  const redo = () => {
+    if (histIdxRef.current >= historyRef.current.length - 1) return;
+    histIdxRef.current++; skipHistRef.current = true;
+    setNodes(historyRef.current[histIdxRef.current]); setSelectedId(null); setHistVer(v => v + 1);
+  };
+  const canUndo = histIdxRef.current > 0;
+  const canRedo = histIdxRef.current < historyRef.current.length - 1;
+
+  // ── Recenter / fit view ───────────────────────────────────────────────
+  const recenter = () => {
+    const r = containerRef.current?.getBoundingClientRect() || { width: 375, height: 700 };
+    if (nodes.length === 0) { setOffset({ x: 0, y: 0 }); setScale(1); return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach(n => {
+      if (n.type === "drawing") n.points.forEach(p => { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); });
+      else if (n.type === "line") [[n.x1, n.y1], [n.x2, n.y2]].forEach(([x, y]) => { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); });
+      else { const w = n.w || 220, h = n.h || 160; minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x + w); maxY = Math.max(maxY, n.y + h); }
+    });
+    const bw = maxX - minX || 1, bh = maxY - minY || 1, pad = 70;
+    const s = Math.min(1.6, Math.max(0.2, Math.min((r.width - pad * 2) / bw, (r.height - pad * 2) / bh)));
+    setScale(s);
+    setOffset({ x: r.width / 2 - (minX + bw / 2) * s, y: r.height / 2 - (minY + bh / 2) * s });
+  };
+
   const toCanvas = (sx, sy) => {
     const r = containerRef.current?.getBoundingClientRect() || {left:0,top:0};
     return { x:(sx-r.left-offset.x)/scale, y:(sy-r.top-offset.y)/scale };
@@ -1789,7 +1933,51 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
   const addNote = () => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"note",x:c.x-100,y:c.y-65,w:200,text:"",color:"#FFF176"}]); setShowVaultPicker(false); setTool("select"); toolRef.current="select"; };
   const addText = (x,y) => setNodes(n=>[...n,{id:Date.now(),type:"text",x,y,text:"",fontSize:16,color:boardDark?"#ffffff":"#111111",bold:false,italic:false,w:200}]);
   const addVault = (item) => { const c=center(); setNodes(n=>[...n,{id:Date.now(),type:"vault",x:c.x-120,y:c.y-70,w:240,item}]); setShowVaultPicker(false); setTool("select"); toolRef.current="select"; };
+  const addMediaFile = async (file) => {
+    if (!file) return;
+    try {
+      const url = await blobToDataUrl(file);
+      const kind = file.type.startsWith("video") ? "video" : "image";
+      addVault({ id: Date.now(), type: kind, url, title: file.name || kind });
+    } catch {}
+  };
   const deleteSelected = () => { if(!selectedId) return; setNodes(n=>n.filter(nd=>nd.id!==selectedId)); setSelectedId(null); };
+
+  // ── Vector (drawing/line) selection + transform ───────────────────────
+  const vecBBox = (nd) => {
+    if (nd.type === "drawing") {
+      let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+      nd.points.forEach(p => { a = Math.min(a, p.x); b = Math.min(b, p.y); c = Math.max(c, p.x); d = Math.max(d, p.y); });
+      return { x: a, y: b, w: c - a, h: d - b };
+    }
+    return { x: Math.min(nd.x1, nd.x2), y: Math.min(nd.y1, nd.y2), w: Math.abs(nd.x2 - nd.x1), h: Math.abs(nd.y2 - nd.y1) };
+  };
+  const hitVector = (x, y) => {
+    const r = 12 / scale;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const nd = nodes[i];
+      if (nd.type === "drawing") {
+        if (nd.points.some(p => Math.hypot(p.x - x, p.y - y) < r)) return nd.id;
+      } else if (nd.type === "line") {
+        const dx = nd.x2 - nd.x1, dy = nd.y2 - nd.y1, len2 = dx * dx + dy * dy;
+        const tt = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - nd.x1) * dx + (y - nd.y1) * dy) / len2));
+        if (Math.hypot(nd.x1 + tt * dx - x, nd.y1 + tt * dy - y) < r) return nd.id;
+      }
+    }
+    return null;
+  };
+  const translateVec = (id, dx, dy) => setNodes(ns => ns.map(nd => {
+    if (nd.id !== id) return nd;
+    if (nd.type === "drawing") return { ...nd, points: nd.points.map(p => ({ x: p.x + dx, y: p.y + dy })) };
+    if (nd.type === "line") return { ...nd, x1: nd.x1 + dx, y1: nd.y1 + dy, x2: nd.x2 + dx, y2: nd.y2 + dy };
+    return nd;
+  }));
+  const scaleVec = (id, ox, oy, f) => setNodes(ns => ns.map(nd => {
+    if (nd.id !== id) return nd;
+    if (nd.type === "drawing") return { ...nd, points: nd.points.map(p => ({ x: ox + (p.x - ox) * f, y: oy + (p.y - oy) * f })) };
+    if (nd.type === "line") return { ...nd, x1: ox + (nd.x1 - ox) * f, y1: oy + (nd.y1 - oy) * f, x2: ox + (nd.x2 - ox) * f, y2: oy + (nd.y2 - oy) * f };
+    return nd;
+  }));
 
   const eraseAt = (x,y) => {
     const r = 20/scale;
@@ -1834,7 +2022,10 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     const {x,y} = toCanvas(e.clientX, e.clientY);
     const t_ = toolRef.current;
     if (t_==="select") {
-      setSelectedId(null); setShowVaultPicker(false);
+      setShowVaultPicker(false);
+      const hit = hitVector(x, y);
+      if (hit) { setSelectedId(hit); return; }
+      setSelectedId(null);
       const p = {sx:e.clientX,sy:e.clientY,ox:offset.x,oy:offset.y};
       setPanning(p); panningRef.current = p;
     } else if (t_==="text") {
@@ -1940,8 +2131,8 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
     return ()=>el.removeEventListener("wheel",fn);
   },[]);
 
-  const bg = "#ffffff"; // Always white canvas
-  const dot = boardDark?"rgba(255,255,255,.05)":"rgba(0,0,0,.07)";
+  const bg = boardDark ? "#0d0f1e" : "#ffffff";
+  const dot = boardDark?"rgba(255,255,255,.06)":"rgba(0,0,0,.07)";
   const sp = 24*scale;
   const tbBg = boardDark?"rgba(7,8,18,.96)":"rgba(248,248,246,.96)";
   const tbBorder = boardDark?"rgba(255,255,255,.09)":"rgba(0,0,0,.1)";
@@ -1968,12 +2159,12 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
           <rect width="100%" height="100%" fill="url(#bdots)"/>
         </svg>
 
-        <div style={{position:"absolute",top:"max(16px, calc(env(safe-area-inset-top) + 8px))",left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:700,color:"rgba(0,0,0,.32)",letterSpacing:"0.12em",textTransform:"uppercase",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
+        <div style={{position:"absolute",top:"max(16px, calc(env(safe-area-inset-top) + 8px))",left:"50%",transform:"translateX(-50%)",fontSize:11,fontWeight:700,color:boardDark?"rgba(255,255,255,.35)":"rgba(0,0,0,.32)",letterSpacing:"0.12em",textTransform:"uppercase",pointerEvents:"none",whiteSpace:"nowrap"}}>{session.name}</div>
         {nodes.length === 0 && (
           <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",textAlign:"center",pointerEvents:"none",userSelect:"none"}}>
-            <div style={{fontSize:36,opacity:.12,marginBottom:12,color:"#000"}}>✦</div>
-            <p style={{fontSize:13,color:"rgba(0,0,0,.22)",fontWeight:600,margin:"0 0 4px"}}>Empty canvas</p>
-            <p style={{fontSize:11,color:"rgba(0,0,0,.15)",margin:0}}>Use the toolbar below to add notes, text, or drawings</p>
+            <div style={{fontSize:36,opacity:boardDark?.2:.12,marginBottom:12,color:boardDark?"#fff":"#000"}}>✦</div>
+            <p style={{fontSize:13,color:boardDark?"rgba(255,255,255,.3)":"rgba(0,0,0,.22)",fontWeight:600,margin:"0 0 4px"}}>Empty canvas</p>
+            <p style={{fontSize:11,color:boardDark?"rgba(255,255,255,.18)":"rgba(0,0,0,.15)",margin:0}}>Use the toolbar below to add notes, text, or drawings</p>
           </div>
         )}
 
@@ -2015,8 +2206,16 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
                     setDragging(drag); draggingRef.current=drag;
                   }}
                   onUpdate={(p)=>setNodes(n=>n.map(nd=>nd.id===node.id?{...nd,...p}:nd))}
+                  onResize={(w,h)=>setNodes(n=>n.map(nd=>nd.id===node.id?{...nd,w,...(h?{h}:{})}:nd))}
+                  scale={scale}
                   onDelete={()=>{setNodes(n=>n.filter(nd=>nd.id!==node.id));setSelectedId(null);}} />
               ))}
+              {(()=>{
+                const v = nodes.find(n=>n.id===selectedId && (n.type==="drawing"||n.type==="line"));
+                return v ? <VecOverlay node={v} scale={scale} bbox={vecBBox}
+                  onTranslate={translateVec} onScale={scaleVec}
+                  onDelete={(id)=>{setNodes(n=>n.filter(nd=>nd.id!==id));setSelectedId(null);}} /> : null;
+              })()}
             </div>
           </div>
         </div>
@@ -2043,7 +2242,34 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
       {/* Freeform-style single-row contextual toolbar */}
       <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,background:tbBg,backdropFilter:"blur(28px)",WebkitBackdropFilter:"blur(28px)",borderTop:`1px solid ${tbBorder}`,paddingBottom:"env(safe-area-inset-bottom)"}}
         onPointerDown={e=>e.stopPropagation()}>
-        <div style={{display:"flex",alignItems:"center",padding:"10px 14px 12px",gap:10,minHeight:60}}>
+
+        {/* Utility strip: undo / redo · recenter · background */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 16px 0",gap:8}}>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={undo} disabled={!canUndo}
+              style={{width:34,height:30,background:tbGroupBg,border:"none",borderRadius:9,cursor:canUndo?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",color:canUndo?tbText:tbMuted,opacity:canUndo?1:0.4}}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+            </button>
+            <button onClick={redo} disabled={!canRedo}
+              style={{width:34,height:30,background:tbGroupBg,border:"none",borderRadius:9,cursor:canRedo?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",color:canRedo?tbText:tbMuted,opacity:canRedo?1:0.4}}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+            </button>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={recenter} title="Recenter"
+              style={{width:34,height:30,background:tbGroupBg,border:"none",borderRadius:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText}}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            </button>
+            <button onClick={()=>setBgMode(m=>m==="dark"?"light":"dark")} title="Background"
+              style={{width:34,height:30,background:tbGroupBg,border:"none",borderRadius:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText}}>
+              {boardDark
+                ? <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+                : <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>}
+            </button>
+          </div>
+        </div>
+
+        <div style={{display:"flex",alignItems:"center",padding:"6px 14px 12px",gap:10,minHeight:56}}>
 
           {/* Left: Back button */}
           <button onClick={onClose}
@@ -2096,8 +2322,11 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
                 <button onPointerDown={e=>e.stopPropagation()} onClick={()=>{
                   const nd = nodes.find(n=>n.id===selectedId);
                   if(!nd) return;
-                  const clone = {...nd, id:Date.now(), x:nd.x+24, y:nd.y+24};
-                  setNodes(n=>[...n,clone]);
+                  let clone;
+                  if(nd.type==="drawing") clone={...nd,id:Date.now(),points:nd.points.map(p=>({x:p.x+24,y:p.y+24}))};
+                  else if(nd.type==="line") clone={...nd,id:Date.now(),x1:nd.x1+24,y1:nd.y1+24,x2:nd.x2+24,y2:nd.y2+24};
+                  else clone={...nd,id:Date.now(),x:nd.x+24,y:nd.y+24};
+                  setNodes(n=>[...n,clone]); setSelectedId(clone.id);
                 }}
                   style={{height:40,padding:"0 16px",background:tbGroupBg,border:"none",borderRadius:13,cursor:"pointer",display:"flex",alignItems:"center",gap:7,color:tbText,fontWeight:600,fontSize:13}}>
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -2126,6 +2355,12 @@ function BoardView({ session, t, theme, vaultItems, onSave, onClose }) {
                   style={{width:48,height:48,background:tbGroupBg,border:"none",borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText,fontSize:18,fontWeight:800,fontFamily:"Georgia,serif",letterSpacing:"-0.02em",lineHeight:1}}>
                   Aa
                 </button>
+                {/* Instant photo / video upload */}
+                <label style={{width:48,height:48,background:tbGroupBg,borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:tbText}}>
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+                  <input type="file" accept="image/*,video/*" className="hidden"
+                    onChange={e=>{const f=e.target.files?.[0];if(f)addMediaFile(f);e.target.value="";}} />
+                </label>
                 {/* Vault attachment */}
                 <button onClick={()=>{setShowVaultPicker(v=>!v);setShowColorPicker(false);}}
                   style={{width:48,height:48,background:showVaultPicker?tbActive:tbGroupBg,border:"none",borderRadius:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:showVaultPicker?"#1768FF":tbText,transition:"background .12s,color .12s"}}>
@@ -2576,7 +2811,8 @@ function QuickMediaVault() {
       onOpen={(s) => setBoardSession(s)}
       onCreate={createSession}
       onDelete={(id) => setSessions(prev => prev.filter(s => s.id !== id))}
-      onRename={renameSession} />
+      onRename={renameSession}
+      onSetCover={(id, patch) => setSessions(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s))} />
   );
 
   const songs = items.filter((item) => item.type === "song");
