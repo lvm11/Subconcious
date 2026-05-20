@@ -3,3 +3,5 @@ uploads/
 .env
 .claude/settings.local.json
 dist/
+
+.vercel
